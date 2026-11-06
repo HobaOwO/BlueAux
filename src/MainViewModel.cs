@@ -4,7 +4,7 @@ using System.Linq;
 using System.Windows.Data;
 using System.Windows.Input;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     public sealed class MainViewModel : ObservableObject
     {
@@ -14,28 +14,38 @@ namespace PhoneSpeaker
         readonly ReceiverEngine engine;
         readonly AppSettings settings;
         readonly ListCollectionView devices;
+        readonly ListCollectionView allDevices;
         readonly ObservableCollection<LogEntry> logEntries = new ObservableCollection<LogEntry>();
         bool settingsOpen;
+        bool moreOpen;
         string heroState = "Loading";
         string heroTitle = "";
         string heroSubtitle = "";
-        string heroGlyph = "";
+        string heroGlyph = "";
         string heroAction;
-        string deviceCountText = "";
+        bool heroActionPrimary = true;
+        bool showDeviceList;
+        DeviceSession mainDevice;
 
         public MainViewModel(ReceiverEngine engine, AppSettings settings)
         {
             this.engine = engine;
             this.settings = settings;
+            // The main page lists your other devices (the big button already covers the main one);
+            // Settings lists all of them, hidden ones too.
             devices = new ListCollectionView(engine.Sessions);
-            devices.Filter = o => settings.ShowHidden || !((DeviceSession)o).IsHidden;
+            devices.Filter = o => !((DeviceSession)o).IsHidden && o != mainDevice;
+            allDevices = new ListCollectionView(engine.Sessions);
 
             OpenSettingsCommand = new RelayCommand(() => IsSettingsOpen = true);
             CloseSettingsCommand = new RelayCommand(() => IsSettingsOpen = false);
+            ToggleMoreCommand = new RelayCommand(() => IsMoreOpen = !IsMoreOpen);
             PairCommand = new RelayCommand(() => Shell.Open("ms-settings:bluetooth"));
             SoundSettingsCommand = new RelayCommand(() => Shell.Open("ms-settings:sound"));
             RestartCommand = new RelayCommand(engine.ResetAll);
-            OpenLogCommand = new RelayCommand(() => Shell.Open(Log.FilePath));
+            OpenLogCommand = new RelayCommand(() => Shell.Open(AppSettings.Folder));
+            OpenRepoCommand = new RelayCommand(() => Shell.Open(AppInfo.RepoUrl));
+            ReportProblemCommand = new RelayCommand(() => Shell.Open(AppInfo.RepoUrl + "/issues"));
             EnableStartupCommand = new RelayCommand(() =>
             {
                 StartWithWindows = true;
@@ -61,16 +71,23 @@ namespace PhoneSpeaker
 
             engine.Changed += Refresh;
             engine.Ticked += Refresh;
-            engine.VisibilityChanged += () => devices.Refresh();
+            engine.VisibilityChanged += () =>
+            {
+                devices.Refresh();
+                allDevices.Refresh();
+            };
             Refresh();
         }
 
         public ICommand OpenSettingsCommand { get; private set; }
         public ICommand CloseSettingsCommand { get; private set; }
+        public ICommand ToggleMoreCommand { get; private set; }
         public ICommand PairCommand { get; private set; }
         public ICommand SoundSettingsCommand { get; private set; }
         public ICommand RestartCommand { get; private set; }
         public ICommand OpenLogCommand { get; private set; }
+        public ICommand OpenRepoCommand { get; private set; }
+        public ICommand ReportProblemCommand { get; private set; }
         public ICommand EnableStartupCommand { get; private set; }
         public ICommand DismissStartupCommand { get; private set; }
         public ICommand HeroActionCommand { get; private set; }
@@ -78,7 +95,11 @@ namespace PhoneSpeaker
         public ICommand IdleLessCommand { get; private set; }
         public ICommand IdleMoreCommand { get; private set; }
 
+        public string AppName { get { return AppInfo.Name; } }
+        public string AboutText { get { return AppInfo.Name + " " + AppInfo.Version + " · free and open source"; } }
+
         public ListCollectionView Devices { get { return devices; } }
+        public ListCollectionView AllDevices { get { return allDevices; } }
         public ObservableCollection<LogEntry> LogEntries { get { return logEntries; } }
 
         public bool IsSettingsOpen
@@ -92,18 +113,30 @@ namespace PhoneSpeaker
 
         public bool IsMainOpen { get { return !settingsOpen; } }
 
+        public bool IsMoreOpen
+        {
+            get { return moreOpen; }
+            set { Set(ref moreOpen, value); }
+        }
+
         public string HeroState { get { return heroState; } }
         public string HeroTitle { get { return heroTitle; } }
         public string HeroSubtitle { get { return heroSubtitle; } }
         public string HeroGlyph { get { return heroGlyph; } }
         public string HeroActionText { get { return heroAction; } }
-        public bool HasHeroAction { get { return heroAction != null; } }
-        public string DeviceCountText { get { return deviceCountText; } }
-        public bool HasDevices { get { return engine.Sessions.Count > 0; } }
+        public bool ShowPrimaryAction { get { return heroAction != null && heroActionPrimary; } }
+        public bool ShowSecondaryAction { get { return heroAction != null && !heroActionPrimary; } }
+        public bool ShowFixAudio { get { return heroState == "Streaming"; } }
+        public bool ShowConnectingHint { get { return heroState == "Connecting"; } }
+
+        // With one phone, the big status at the top says it all; the list only helps with several.
+        public bool ShowDeviceList { get { return showDeviceList; } }
+
+        public bool ShowPcSilenced { get { return heroState == "Streaming" && engine.PcSilenced; } }
 
         public bool ShowStartupPrompt
         {
-            get { return !settings.AskedAboutStartup && !AutoStart.IsEnabled; }
+            get { return !settings.AskedAboutStartup && !AutoStart.IsEnabled && engine.Sessions.Count > 0; }
         }
 
         public bool StartWithWindows
@@ -135,12 +168,6 @@ namespace PhoneSpeaker
             set { settings.Notifications = value; settings.Save(); Raise(); }
         }
 
-        public bool ShowHidden
-        {
-            get { return settings.ShowHidden; }
-            set { settings.ShowHidden = value; settings.Save(); Raise(); devices.Refresh(); Refresh(); }
-        }
-
         public bool RestWhenIdle
         {
             get { return settings.RestWhenIdle; }
@@ -165,10 +192,6 @@ namespace PhoneSpeaker
             set { settings.DisconnectWhenIdle = value; settings.Save(); Raise(); }
         }
 
-        public bool ShowFixAudio { get { return heroState == "Streaming"; } }
-
-        public string LogPath { get { return Log.FilePath; } }
-
         void SetIdleMinutes(int minutes)
         {
             settings.IdleMinutes = Math.Max(MinIdleMinutes, Math.Min(MaxIdleMinutes, minutes));
@@ -191,9 +214,22 @@ namespace PhoneSpeaker
 
         void RunHeroAction()
         {
-            if (heroState == "Off") engine.TurnOnBluetooth();
-            else if (heroState == "Paused") engine.SetAutoPaused(false);
-            else Shell.Open("ms-settings:bluetooth");
+            switch (heroState)
+            {
+                case "Off":
+                    if (engine.RadioStatus == RadioStatus.Missing) Shell.Open("ms-settings:bluetooth");
+                    else engine.TurnOnBluetooth();
+                    break;
+                case "Empty":
+                    Shell.Open("ms-settings:bluetooth");
+                    break;
+                case "Streaming":
+                    if (engine.Active != null) engine.Active.Disconnect();
+                    break;
+                default:
+                    if (mainDevice != null) mainDevice.Connect(true);
+                    break;
+            }
         }
 
         void Refresh()
@@ -202,13 +238,22 @@ namespace PhoneSpeaker
             var streaming = visible.Where(s => s.State == LinkState.Streaming).ToList();
             var connecting = visible.FirstOrDefault(s => s.State == LinkState.Connecting);
             var hiddenCount = engine.Sessions.Count - visible.Count;
+            // The phone the big button acts on: the one playing or connecting, otherwise the one used last.
+            var main = streaming.FirstOrDefault() ?? connecting ?? visible.OrderByDescending(s => s.LastConnected).FirstOrDefault();
+            if (main != mainDevice)
+            {
+                mainDevice = main;
+                devices.Refresh();
+            }
+            string name = mainDevice != null ? mainDevice.DisplayName : "your phone";
 
-            string state, title, subtitle, glyph = "", action = null;
+            string state, title, subtitle, glyph = "\uE702", action = null;
+            bool primary = true;
             if (engine.RadioStatus == RadioStatus.Missing)
             {
                 state = "Off";
                 title = "No Bluetooth found";
-                subtitle = "This PC's Bluetooth adapter seems to be off or unplugged.";
+                subtitle = "This PC's Bluetooth seems to be off or unplugged.";
                 action = "Open Bluetooth settings";
             }
             else if (!engine.RadioOn)
@@ -221,11 +266,13 @@ namespace PhoneSpeaker
             else if (visible.Count == 0)
             {
                 state = engine.EnumerationDone ? "Empty" : "Loading";
-                title = engine.EnumerationDone ? "Pair your phone first" : "Looking for devices…";
+                title = engine.EnumerationDone ? "Pair your phone first" : "Looking for your phone…";
                 subtitle = engine.EnumerationDone
-                    ? (hiddenCount > 0 ? "All your devices are hidden. Turn on \"Show hidden devices\" in settings, or pair another phone." : "In Bluetooth settings, add your phone to this PC once. After that it shows up here.")
+                    ? (hiddenCount > 0
+                        ? "All your devices are hidden. Unhide one in Settings, or pair another phone."
+                        : "Add your phone in Windows Bluetooth settings once. After that it shows up here.")
                     : "";
-                glyph = "";
+                glyph = "\uE8EA";
                 if (engine.EnumerationDone) action = "Pair a phone";
             }
             else if (streaming.Count > 0)
@@ -234,51 +281,77 @@ namespace PhoneSpeaker
                 title = "Playing from " + string.Join(" & ", streaming.Select(s => s.DisplayName));
                 var since = streaming[0].StreamingSince;
                 subtitle = "Connected for " + DeviceSession.FormatDuration(since.HasValue ? DateTime.Now - since.Value : TimeSpan.Zero);
+                action = "Disconnect";
+                primary = false;
             }
             else if (connecting != null)
             {
                 state = "Connecting";
                 title = "Connecting to " + connecting.DisplayName + "…";
-                subtitle = "Keep the phone nearby with Bluetooth on.";
+                subtitle = connecting.IsSettling ? "Making sure the sound works."
+                    : connecting.IsFixing ? "Keep the music playing on your phone."
+                    : "Keep the phone nearby with Bluetooth on.";
+            }
+            else if (mainDevice != null && mainDevice.RecentlyFailedToConnect)
+            {
+                state = "Failed";
+                title = "Couldn't connect to " + name;
+                subtitle = mainDevice.LastError == "Not found nearby" || mainDevice.LastError == null
+                    ? "Make sure it's nearby with Bluetooth on, then try again."
+                    : mainDevice.LastError + ". Try again in a moment.";
+                glyph = "\uE7BA";
+                action = "Try again";
             }
             else if (engine.PcIdle)
             {
                 state = "Resting";
                 title = "Resting";
-                subtitle = "Nobody has used this PC for a while, so Phone Speaker disconnected and stopped looking for your phone. It starts again as soon as you're back.";
-                glyph = "";
+                subtitle = "Nobody is using this PC, so it stopped looking for " + name + ". It starts again when you're back.";
+                glyph = "\uE708";
+                action = "Connect";
             }
             else if (engine.AutoPaused)
             {
                 state = "Paused";
-                title = "Paused";
-                subtitle = "You disconnected, so nothing reconnects by itself until you press Connect.";
-                glyph = "";
-                action = "Resume auto-connect";
+                title = "Disconnected";
+                subtitle = name + " won't reconnect by itself until you press Connect.";
+                glyph = "\uE769";
+                action = "Connect";
             }
             else if (visible.Any(s => s.State == LinkState.Waiting))
             {
                 state = "Waiting";
-                title = "Waiting for your phone";
-                subtitle = "It connects by itself when it's nearby. You can also pick this PC in your phone's Bluetooth menu.";
+                title = "Waiting for " + name;
+                subtitle = "It connects by itself when it's nearby. You can also pick this PC in your phone's Bluetooth settings.";
+                action = "Connect now";
+                primary = false;
             }
             else
             {
                 state = "Idle";
                 title = "Ready to play";
-                subtitle = "Press Connect below, or pick this PC in your phone's Bluetooth menu.";
-                glyph = "";
+                subtitle = "Press Connect, or pick this PC in your phone's Bluetooth settings.";
+                glyph = "\uE767";
+                action = "Connect";
             }
 
-            if (Set(ref heroState, state, "HeroState")) Raise("ShowFixAudio");
+            if (Set(ref heroState, state, "HeroState"))
+            {
+                Raise("ShowFixAudio");
+                Raise("ShowConnectingHint");
+            }
             Set(ref heroTitle, title, "HeroTitle");
             Set(ref heroSubtitle, subtitle, "HeroSubtitle");
             Set(ref heroGlyph, glyph, "HeroGlyph");
-            if (Set(ref heroAction, action, "HeroActionText")) Raise("HasHeroAction");
-
-            string count = hiddenCount > 0 && !settings.ShowHidden ? string.Format("{0} hidden", hiddenCount) : "";
-            Set(ref deviceCountText, count, "DeviceCountText");
-            Raise("HasDevices");
+            bool actionChanged = Set(ref heroAction, action, "HeroActionText");
+            if (Set(ref heroActionPrimary, primary, "HeroActionPrimary") || actionChanged)
+            {
+                Raise("ShowPrimaryAction");
+                Raise("ShowSecondaryAction");
+            }
+            Set(ref showDeviceList, visible.Count > 1, "ShowDeviceList");
+            Raise("ShowPcSilenced");
+            Raise("ShowStartupPrompt");
         }
     }
 }

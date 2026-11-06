@@ -2,93 +2,63 @@
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid.Resources>
 
-    <DataTemplate x:Key="DeviceCard">
-      <Border x:Name="CardBorder" Style="{StaticResource Card}" Margin="0,0,0,6">
-        <StackPanel>
-          <Grid>
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+    <!-- A phone on the main page (only shown when you have more than one) -->
+    <DataTemplate x:Key="DeviceRow">
+      <Border Style="{StaticResource Card}" Margin="0,0,0,6" Padding="12,10">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
 
-            <Grid Width="40" Height="40" VerticalAlignment="Center">
-              <Ellipse x:Name="Badge" Fill="{DynamicResource Subtle}"/>
-              <TextBlock x:Name="BadgeGlyph" Style="{StaticResource Icon}" Text="{Binding Glyph}" FontSize="18"/>
-              <Ellipse x:Name="Dot" Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-1,-1"
-                       Fill="Transparent" StrokeThickness="0"/>
-            </Grid>
-
-            <StackPanel Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center">
-              <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-              <TextBlock Text="{Binding StatusText}" FontSize="12" Margin="0,2,0,0" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis"/>
-            </StackPanel>
-
-            <Grid Grid.Column="2" VerticalAlignment="Center">
-              <Button Style="{StaticResource AccentButton}" Content="Connect" Command="{Binding ConnectCommand}"
-                      Visibility="{Binding ShowConnect, Converter={StaticResource BoolToVis}}"/>
-              <Button Style="{StaticResource SubtleButton}" Content="Connecting…" IsEnabled="False"
-                      Visibility="{Binding ShowConnecting, Converter={StaticResource BoolToVis}}"/>
-              <Button Style="{StaticResource SubtleButton}" Content="Disconnect" Command="{Binding DisconnectCommand}"
-                      Visibility="{Binding ShowDisconnect, Converter={StaticResource BoolToVis}}"/>
-            </Grid>
-
-            <Button Grid.Column="3" Style="{StaticResource IconButton}" Margin="4,0,-6,0" Command="{Binding ExpandCommand}" ToolTip="Options"
-                    AutomationProperties.Name="Options">
-              <TextBlock x:Name="Chevron" Style="{StaticResource Icon}" Text="&#xE70D;" FontSize="12"/>
-            </Button>
+          <Grid Width="36" Height="36" VerticalAlignment="Center">
+            <Ellipse x:Name="Badge" Fill="{DynamicResource Subtle}"/>
+            <TextBlock x:Name="BadgeGlyph" Style="{StaticResource Icon}" Text="{Binding Glyph}" FontSize="16"/>
           </Grid>
 
-          <StackPanel Margin="52,14,0,2" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
-            <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding AutoConnect}">
-              <StackPanel>
-                <TextBlock Text="Connect automatically" FontSize="13"/>
-                <TextBlock Style="{StaticResource Secondary}" Text="Reconnect by itself whenever this device is nearby"/>
-              </StackPanel>
-            </CheckBox>
-
-            <TextBlock Text="Name" FontSize="12" Foreground="{DynamicResource TextSecondary}" Margin="0,14,0,4"/>
-            <TextBox Style="{StaticResource NameBox}" Text="{Binding EditableName, UpdateSourceTrigger=LostFocus}"/>
-            <TextBlock Style="{StaticResource Secondary}" Text="{Binding AddressText}" Foreground="{DynamicResource TextTertiary}" Margin="0,4,0,0"/>
-
-            <WrapPanel Margin="0,12,0,0">
-              <Button Style="{StaticResource SubtleButton}" Command="{Binding FixCommand}" Margin="0,0,8,0"
-                      ToolTip="Connected but no sound? This rebuilds the connection from scratch.">
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Style="{StaticResource Icon}" Text="&#xE90F;" FontSize="14" Margin="0,0,8,0"/>
-                  <TextBlock Text="Fix audio"/>
-                </StackPanel>
-              </Button>
-              <Button Style="{StaticResource SubtleButton}" Command="{Binding HideCommand}"
-                      ToolTip="Hidden devices never connect. Show them again from Settings.">
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Style="{StaticResource Icon}" Text="{Binding HideGlyph}" FontSize="14" Margin="0,0,8,0"/>
-                  <TextBlock Text="{Binding HideText}"/>
-                </StackPanel>
-              </Button>
-            </WrapPanel>
+          <StackPanel Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center">
+            <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="{Binding StatusText}" FontSize="12" Margin="0,1,0,0" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis"/>
           </StackPanel>
-        </StackPanel>
+
+          <Grid Grid.Column="2" VerticalAlignment="Center">
+            <Button Style="{StaticResource SubtleButton}" Content="Connect" Command="{Binding ConnectCommand}"
+                    Visibility="{Binding ShowConnect, Converter={StaticResource BoolToVis}}"/>
+            <Button Style="{StaticResource SubtleButton}" Content="Connecting…" IsEnabled="False"
+                    Visibility="{Binding ShowConnecting, Converter={StaticResource BoolToVis}}"/>
+            <Button Style="{StaticResource SubtleButton}" Content="Disconnect" Command="{Binding DisconnectCommand}"
+                    Visibility="{Binding ShowDisconnect, Converter={StaticResource BoolToVis}}"/>
+          </Grid>
+        </Grid>
       </Border>
       <DataTemplate.Triggers>
         <DataTrigger Binding="{Binding StateName}" Value="Streaming">
           <Setter TargetName="Badge" Property="Fill" Value="{DynamicResource Accent}"/>
           <Setter TargetName="BadgeGlyph" Property="Foreground" Value="{DynamicResource OnAccent}"/>
-          <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource Success}"/>
-          <Setter TargetName="Dot" Property="Stroke" Value="{DynamicResource CardSolid}"/>
-          <Setter TargetName="Dot" Property="StrokeThickness" Value="2"/>
         </DataTrigger>
-        <DataTrigger Binding="{Binding StateName}" Value="Connecting">
-          <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource Caution}"/>
-          <Setter TargetName="Dot" Property="Stroke" Value="{DynamicResource CardSolid}"/>
-          <Setter TargetName="Dot" Property="StrokeThickness" Value="2"/>
-        </DataTrigger>
-        <DataTrigger Binding="{Binding IsExpanded}" Value="True">
-          <Setter TargetName="Chevron" Property="Text" Value="&#xE70E;"/>
-        </DataTrigger>
+      </DataTemplate.Triggers>
+    </DataTemplate>
+
+    <!-- A phone in Settings: auto-connect and hide -->
+    <DataTemplate x:Key="DeviceSettingsRow">
+      <Border x:Name="Row" Style="{StaticResource Card}" Margin="0,0,0,4" Padding="16,12">
+        <StackPanel>
+          <CheckBox x:Name="Auto" Style="{StaticResource Switch}" IsChecked="{Binding AutoConnect}"
+                    AutomationProperties.Name="{Binding DisplayName}">
+            <StackPanel>
+              <TextBlock Text="{Binding DisplayName}" FontSize="13.5" TextTrimming="CharacterEllipsis"/>
+              <TextBlock Style="{StaticResource Secondary}" Text="{Binding SettingsHint}"/>
+            </StackPanel>
+          </CheckBox>
+          <Button Style="{StaticResource LinkButton}" Content="{Binding HideText}" Command="{Binding HideCommand}"
+                  HorizontalAlignment="Left" Margin="-8,4,0,-4" FontSize="12"/>
+        </StackPanel>
+      </Border>
+      <DataTemplate.Triggers>
         <DataTrigger Binding="{Binding IsHidden}" Value="True">
-          <Setter TargetName="CardBorder" Property="Opacity" Value="0.6"/>
+          <Setter TargetName="Auto" Property="IsEnabled" Value="False"/>
+          <Setter TargetName="Row" Property="Opacity" Value="0.7"/>
         </DataTrigger>
       </DataTemplate.Triggers>
     </DataTemplate>
@@ -112,30 +82,30 @@
           </Button>
         </Grid>
 
-        <!-- Status hero -->
-        <Grid Height="150" Margin="0,0,0,0">
-          <Ellipse x:Name="Ring1" Width="104" Height="104" Fill="{DynamicResource AccentSoft}" Opacity="0" RenderTransformOrigin="0.5,0.5">
+        <!-- Status -->
+        <Grid Height="168" Margin="0,4,0,0">
+          <Ellipse x:Name="Ring1" Width="116" Height="116" Fill="{DynamicResource AccentSoft}" Opacity="0" RenderTransformOrigin="0.5,0.5">
             <Ellipse.RenderTransform><ScaleTransform/></Ellipse.RenderTransform>
           </Ellipse>
-          <Ellipse x:Name="Ring2" Width="104" Height="104" Fill="{DynamicResource AccentSoft}" Opacity="0" RenderTransformOrigin="0.5,0.5">
+          <Ellipse x:Name="Ring2" Width="116" Height="116" Fill="{DynamicResource AccentSoft}" Opacity="0" RenderTransformOrigin="0.5,0.5">
             <Ellipse.RenderTransform><ScaleTransform/></Ellipse.RenderTransform>
           </Ellipse>
-          <Ellipse x:Name="HeroCircle" Width="104" Height="104" Fill="{DynamicResource Accent}"/>
-          <TextBlock x:Name="HeroGlyph" Style="{StaticResource Icon}" FontSize="42" Text="{Binding HeroGlyph}"/>
+          <Ellipse x:Name="HeroCircle" Width="116" Height="116" Fill="{DynamicResource Accent}"/>
+          <TextBlock x:Name="HeroGlyph" Style="{StaticResource Icon}" FontSize="46" Text="{Binding HeroGlyph}"/>
           <StackPanel x:Name="Bars" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-            <Rectangle x:Name="Bar0" Width="6" Height="38" RadiusX="3" RadiusY="3" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
+            <Rectangle x:Name="Bar0" Width="7" Height="42" RadiusX="3.5" RadiusY="3.5" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
               <Rectangle.RenderTransform><ScaleTransform ScaleY="0.5"/></Rectangle.RenderTransform>
             </Rectangle>
-            <Rectangle x:Name="Bar1" Width="6" Height="38" RadiusX="3" RadiusY="3" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
+            <Rectangle x:Name="Bar1" Width="7" Height="42" RadiusX="3.5" RadiusY="3.5" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
               <Rectangle.RenderTransform><ScaleTransform ScaleY="0.8"/></Rectangle.RenderTransform>
             </Rectangle>
-            <Rectangle x:Name="Bar2" Width="6" Height="38" RadiusX="3" RadiusY="3" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
+            <Rectangle x:Name="Bar2" Width="7" Height="42" RadiusX="3.5" RadiusY="3.5" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
               <Rectangle.RenderTransform><ScaleTransform ScaleY="0.4"/></Rectangle.RenderTransform>
             </Rectangle>
-            <Rectangle x:Name="Bar3" Width="6" Height="38" RadiusX="3" RadiusY="3" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
+            <Rectangle x:Name="Bar3" Width="7" Height="42" RadiusX="3.5" RadiusY="3.5" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
               <Rectangle.RenderTransform><ScaleTransform ScaleY="0.9"/></Rectangle.RenderTransform>
             </Rectangle>
-            <Rectangle x:Name="Bar4" Width="6" Height="38" RadiusX="3" RadiusY="3" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
+            <Rectangle x:Name="Bar4" Width="7" Height="42" RadiusX="3.5" RadiusY="3.5" Margin="3,0" Fill="{DynamicResource OnAccent}" RenderTransformOrigin="0.5,0.5">
               <Rectangle.RenderTransform><ScaleTransform ScaleY="0.6"/></Rectangle.RenderTransform>
             </Rectangle>
           </StackPanel>
@@ -144,21 +114,37 @@
         <TextBlock Text="{Binding HeroTitle}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center"
                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,6,0,0"/>
         <TextBlock Text="{Binding HeroSubtitle}" FontSize="13" Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"
-                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="330" Margin="0,6,0,0" LineHeight="19"/>
-        <Button Style="{StaticResource AccentButton}" Content="{Binding HeroActionText}" Command="{Binding HeroActionCommand}"
-                HorizontalAlignment="Center" Margin="0,16,0,0" Padding="20,7"
-                Visibility="{Binding HasHeroAction, Converter={StaticResource BoolToVis}}"/>
-        <Button Style="{StaticResource LinkButton}" Command="{Binding FixAudioCommand}" HorizontalAlignment="Center" Margin="0,8,0,0"
+                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="320" Margin="0,6,0,0" LineHeight="19"/>
+
+        <!-- The PC itself is muted: the most common "no sound" of all -->
+        <Border Margin="0,14,0,0" Padding="12,8" CornerRadius="6" Background="{DynamicResource CautionSoft}" HorizontalAlignment="Center"
+                Visibility="{Binding ShowPcSilenced, Converter={StaticResource BoolToVis}}">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Style="{StaticResource Icon}" Text="&#xE74F;" FontSize="14" Margin="0,0,8,0" Foreground="{DynamicResource Caution}"/>
+            <TextBlock Text="This PC's sound is muted or turned all the way down." FontSize="12.5" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Border>
+
+        <!-- One button that does the obvious next thing -->
+        <Grid HorizontalAlignment="Center" Margin="0,18,0,0">
+          <Button Style="{StaticResource AccentButton}" Content="{Binding HeroActionText}" Command="{Binding HeroActionCommand}"
+                  Padding="28,8" MinWidth="150"
+                  Visibility="{Binding ShowPrimaryAction, Converter={StaticResource BoolToVis}}"/>
+          <Button Style="{StaticResource SubtleButton}" Content="{Binding HeroActionText}" Command="{Binding HeroActionCommand}"
+                  Padding="28,8" MinWidth="150"
+                  Visibility="{Binding ShowSecondaryAction, Converter={StaticResource BoolToVis}}"/>
+        </Grid>
+        <Button Style="{StaticResource LinkButton}" Command="{Binding FixAudioCommand}" HorizontalAlignment="Center" Margin="0,10,0,0"
                 Visibility="{Binding ShowFixAudio, Converter={StaticResource BoolToVis}}"
-                ToolTip="Press play on your phone first. This reconnects it, which gets stuck sound going again.">
+                ToolTip="Press play on your phone first, then click this. Reconnecting while music plays gets stuck sound going again.">
           <StackPanel Orientation="Horizontal">
             <TextBlock Style="{StaticResource Icon}" Text="&#xE90F;" FontSize="12" Margin="0,0,6,0"/>
-            <TextBlock Text="No sound? Fix it"/>
+            <TextBlock Text="No sound? Press play on your phone, then click here"/>
           </StackPanel>
         </Button>
 
         <!-- First run: offer to start with Windows -->
-        <Border Style="{StaticResource Card}" Margin="0,22,0,0" Padding="16,14"
+        <Border Style="{StaticResource Card}" Margin="0,24,0,0" Padding="16,14"
                 Visibility="{Binding ShowStartupPrompt, Converter={StaticResource BoolToVis}}">
           <Grid>
             <Grid.ColumnDefinitions>
@@ -170,33 +156,27 @@
             <StackPanel Grid.Column="1">
               <TextBlock Text="Start with Windows?" FontSize="14" FontWeight="SemiBold"/>
               <TextBlock Style="{StaticResource Secondary}" FontSize="12.5" Margin="0,4,0,12" LineHeight="18"
-                         Text="Phone Speaker waits quietly in the tray, so your phone can connect any time, like a car stereo."/>
+                         Text="Then it waits quietly in the tray and your phone connects whenever it's nearby, like in a car."/>
               <WrapPanel>
-                <Button Style="{StaticResource AccentButton}" Content="Start with Windows" Command="{Binding EnableStartupCommand}" Margin="0,0,8,0"/>
+                <Button Style="{StaticResource AccentButton}" Content="Yes, start with Windows" Command="{Binding EnableStartupCommand}" Margin="0,0,8,0"/>
                 <Button Style="{StaticResource SubtleButton}" Content="Not now" Command="{Binding DismissStartupCommand}"/>
               </WrapPanel>
             </StackPanel>
           </Grid>
         </Border>
 
-        <!-- Devices -->
-        <Grid Margin="0,24,0,8">
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="Your devices" FontSize="14" FontWeight="SemiBold" Margin="2,0,0,0"/>
-            <TextBlock Text="{Binding DeviceCountText}" FontSize="12" Foreground="{DynamicResource TextTertiary}" Margin="8,1,0,0" VerticalAlignment="Center"/>
+        <!-- Several phones: pick which one plays -->
+        <StackPanel Visibility="{Binding ShowDeviceList, Converter={StaticResource BoolToVis}}">
+          <TextBlock Style="{StaticResource SectionHeader}" Text="Other devices" Margin="2,26,0,8"/>
+          <ItemsControl ItemsSource="{Binding Devices}" ItemTemplate="{StaticResource DeviceRow}" Focusable="False"/>
+        </StackPanel>
+
+        <Button Style="{StaticResource LinkButton}" HorizontalAlignment="Center" Margin="0,16,0,0" Command="{Binding PairCommand}">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Style="{StaticResource Icon}" Text="&#xE710;" FontSize="12" Margin="0,0,6,0"/>
+            <TextBlock Text="Add a phone"/>
           </StackPanel>
-          <Button Style="{StaticResource LinkButton}" HorizontalAlignment="Right" Margin="0,0,-8,0" Command="{Binding PairCommand}">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Style="{StaticResource Icon}" Text="&#xE710;" FontSize="12" Margin="0,0,6,0"/>
-              <TextBlock Text="Pair a phone"/>
-            </StackPanel>
-          </Button>
-        </Grid>
-
-        <ItemsControl ItemsSource="{Binding Devices}" ItemTemplate="{StaticResource DeviceCard}" Focusable="False"/>
-
-        <TextBlock Style="{StaticResource Secondary}" Foreground="{DynamicResource TextTertiary}" Margin="2,10,2,0" LineHeight="17"
-                   Text="Closing this window keeps Phone Speaker running in the tray, so your phone can reconnect any time."/>
+        </Button>
       </StackPanel>
     </ScrollViewer>
   </Grid>
@@ -213,29 +193,19 @@
           <TextBlock Text="Settings" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" Margin="10,0,0,2"/>
         </StackPanel>
 
-        <TextBlock Style="{StaticResource SectionHeader}" Text="Behaviour" Margin="2,14,0,8"/>
-
-        <Border Style="{StaticResource SettingRow}">
+        <Border Style="{StaticResource SettingRow}" Margin="0,14,0,4">
           <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding StartWithWindows}">
             <StackPanel>
               <TextBlock Text="Start with Windows" FontSize="13.5"/>
-              <TextBlock Style="{StaticResource Secondary}" Text="Start quietly in the tray when you sign in"/>
+              <TextBlock Style="{StaticResource Secondary}" Text="Waits in the tray so your phone can connect any time"/>
             </StackPanel>
           </CheckBox>
         </Border>
         <Border Style="{StaticResource SettingRow}">
-          <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding CloseToTray}">
+          <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding Notifications}">
             <StackPanel>
-              <TextBlock Text="Keep running when closed" FontSize="13.5"/>
-              <TextBlock Style="{StaticResource Secondary}" Text="Closing the window hides it to the tray instead of quitting"/>
-            </StackPanel>
-          </CheckBox>
-        </Border>
-        <Border Style="{StaticResource SettingRow}">
-          <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding KeepAwake}">
-            <StackPanel>
-              <TextBlock Text="Keep PC awake while playing" FontSize="13.5"/>
-              <TextBlock Style="{StaticResource Secondary}" Text="Stops the PC from going to sleep in the middle of a song"/>
+              <TextBlock Text="Notifications" FontSize="13.5"/>
+              <TextBlock Style="{StaticResource Secondary}" Text="Tell me when a phone connects or disconnects"/>
             </StackPanel>
           </CheckBox>
         </Border>
@@ -243,14 +213,14 @@
           <StackPanel>
             <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding RestWhenIdle}">
               <StackPanel>
-                <TextBlock Text="Rest when the PC is idle" FontSize="13.5"/>
+                <TextBlock Text="Rest when I'm away" FontSize="13.5"/>
                 <TextBlock Style="{StaticResource Secondary}"
-                           Text="When nobody uses the mouse or keyboard (or the PC is locked), stop looking for your phone. Starts again as soon as you're back. Music that's playing keeps going."/>
+                           Text="With no mouse or keyboard use (or the PC locked), stop looking for your phone. Music that's playing keeps going."/>
               </StackPanel>
             </CheckBox>
             <StackPanel Margin="0,14,0,0" Visibility="{Binding RestWhenIdle, Converter={StaticResource BoolToVis}}">
               <StackPanel Orientation="Horizontal">
-                <TextBlock Text="Idle after" FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="After" FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/>
                 <Button Style="{StaticResource SubtleButton}" Command="{Binding IdleLessCommand}" Padding="0" Width="32" MinHeight="32"
                         ToolTip="Less" AutomationProperties.Name="Fewer minutes">
                   <TextBlock Style="{StaticResource Icon}" Text="&#xE738;" FontSize="12"/>
@@ -267,75 +237,104 @@
                 <StackPanel>
                   <TextBlock Text="Disconnect the phone too" FontSize="13"/>
                   <TextBlock Style="{StaticResource Secondary}"
-                             Text="Off: a phone that's already connected stays connected while resting; only the searching stops."/>
+                             Text="Off is more reliable: some iPhones come back without sound after being disconnected while paused."/>
                 </StackPanel>
               </CheckBox>
             </StackPanel>
           </StackPanel>
         </Border>
-        <Border Style="{StaticResource SettingRow}">
-          <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding Notifications}">
-            <StackPanel>
-              <TextBlock Text="Notifications" FontSize="13.5"/>
-              <TextBlock Style="{StaticResource Secondary}" Text="Tell me when a phone connects or disconnects"/>
-            </StackPanel>
-          </CheckBox>
-        </Border>
-        <Border Style="{StaticResource SettingRow}">
-          <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding ShowHidden}">
-            <StackPanel>
-              <TextBlock Text="Show hidden devices" FontSize="13.5"/>
-              <TextBlock Style="{StaticResource Secondary}" Text="List devices you've hidden so you can bring them back"/>
-            </StackPanel>
-          </CheckBox>
-        </Border>
 
-        <TextBlock Style="{StaticResource SectionHeader}" Text="Bluetooth &amp; sound"/>
-        <WrapPanel>
-          <Button Style="{StaticResource SubtleButton}" Command="{Binding PairCommand}" Margin="0,0,8,8">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Style="{StaticResource Icon}" Text="&#xE702;" FontSize="14" Margin="0,0,8,0"/>
-              <TextBlock Text="Bluetooth settings"/>
-            </StackPanel>
-          </Button>
-          <Button Style="{StaticResource SubtleButton}" Command="{Binding SoundSettingsCommand}" Margin="0,0,8,8">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Style="{StaticResource Icon}" Text="&#xE767;" FontSize="14" Margin="0,0,8,0"/>
-              <TextBlock Text="Sound output"/>
-            </StackPanel>
-          </Button>
-          <Button Style="{StaticResource SubtleButton}" Command="{Binding RestartCommand}" Margin="0,0,8,8"
-                  ToolTip="Drops and rebuilds every connection. Use it if something seems stuck.">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Style="{StaticResource Icon}" Text="&#xE72C;" FontSize="14" Margin="0,0,8,0"/>
-              <TextBlock Text="Restart connections"/>
-            </StackPanel>
-          </Button>
-        </WrapPanel>
+        <TextBlock Style="{StaticResource SectionHeader}" Text="Your devices"/>
+        <ItemsControl ItemsSource="{Binding AllDevices}" ItemTemplate="{StaticResource DeviceSettingsRow}" Focusable="False"/>
 
-        <Grid Margin="0,14,0,8">
-          <TextBlock Style="{StaticResource SectionHeader}" Text="Recent activity" Margin="2,0,0,0" VerticalAlignment="Center"/>
-          <Button Style="{StaticResource LinkButton}" HorizontalAlignment="Right" Margin="0,0,-8,0" Content="Open full log" Command="{Binding OpenLogCommand}"/>
-        </Grid>
-        <Border Style="{StaticResource Card}" Padding="14,10">
-          <ItemsControl ItemsSource="{Binding LogEntries}" Focusable="False">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Grid Margin="0,3">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="48"/>
-                    <ColumnDefinition Width="*"/>
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Text="{Binding TimeText}" FontSize="12" Foreground="{DynamicResource TextTertiary}"/>
-                  <TextBlock Grid.Column="1" Text="{Binding Message}" FontSize="12" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
-                </Grid>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </Border>
+        <Button Style="{StaticResource LinkButton}" Command="{Binding ToggleMoreCommand}" HorizontalAlignment="Left" Margin="-8,16,0,0">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="More options" FontSize="13"/>
+            <TextBlock FontSize="10" Margin="8,2,0,0">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                  <Setter Property="Text" Value="&#xE70D;"/>
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsMoreOpen}" Value="True">
+                      <Setter Property="Text" Value="&#xE70E;"/>
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
+          </StackPanel>
+        </Button>
 
-        <TextBlock Style="{StaticResource Secondary}" Foreground="{DynamicResource TextTertiary}" Margin="2,18,2,0" LineHeight="17"
-                   Text="Phone Speaker 1.0 · uses the Bluetooth audio receiver built into Windows. Loudness follows both your phone's volume and this PC's volume."/>
+        <StackPanel Visibility="{Binding IsMoreOpen, Converter={StaticResource BoolToVis}}" Margin="0,8,0,0">
+          <Border Style="{StaticResource SettingRow}">
+            <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding CloseToTray}">
+              <StackPanel>
+                <TextBlock Text="Keep running when closed" FontSize="13.5"/>
+                <TextBlock Style="{StaticResource Secondary}" Text="Closing the window hides it to the tray instead of quitting"/>
+              </StackPanel>
+            </CheckBox>
+          </Border>
+          <Border Style="{StaticResource SettingRow}">
+            <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding KeepAwake}">
+              <StackPanel>
+                <TextBlock Text="Keep the PC awake while playing" FontSize="13.5"/>
+                <TextBlock Style="{StaticResource Secondary}" Text="Stops the PC from going to sleep in the middle of a song"/>
+              </StackPanel>
+            </CheckBox>
+          </Border>
+
+          <WrapPanel Margin="0,10,0,0">
+            <Button Style="{StaticResource SubtleButton}" Command="{Binding PairCommand}" Margin="0,0,8,8">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" Text="&#xE702;" FontSize="14" Margin="0,0,8,0"/>
+                <TextBlock Text="Bluetooth settings"/>
+              </StackPanel>
+            </Button>
+            <Button Style="{StaticResource SubtleButton}" Command="{Binding SoundSettingsCommand}" Margin="0,0,8,8">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" Text="&#xE767;" FontSize="14" Margin="0,0,8,0"/>
+                <TextBlock Text="Sound settings"/>
+              </StackPanel>
+            </Button>
+            <Button Style="{StaticResource SubtleButton}" Command="{Binding RestartCommand}" Margin="0,0,8,8"
+                    ToolTip="Drops and rebuilds every connection. Use it if something seems stuck.">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" Text="&#xE72C;" FontSize="14" Margin="0,0,8,0"/>
+                <TextBlock Text="Restart connections"/>
+              </StackPanel>
+            </Button>
+          </WrapPanel>
+
+          <Grid Margin="0,10,0,8">
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Recent activity" Margin="2,0,0,0" VerticalAlignment="Center"/>
+            <Button Style="{StaticResource LinkButton}" HorizontalAlignment="Right" Margin="0,0,-8,0" Content="Open log folder" Command="{Binding OpenLogCommand}"/>
+          </Grid>
+          <Border Style="{StaticResource Card}" Padding="14,10">
+            <ItemsControl ItemsSource="{Binding LogEntries}" Focusable="False">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="0,3">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="48"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding TimeText}" FontSize="12" Foreground="{DynamicResource TextTertiary}"/>
+                    <TextBlock Grid.Column="1" Text="{Binding Message}" FontSize="12" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </Border>
+        </StackPanel>
+
+        <!-- About -->
+        <StackPanel Margin="2,22,2,0">
+          <TextBlock Text="{Binding AboutText}" FontSize="12" Foreground="{DynamicResource TextTertiary}"/>
+          <WrapPanel Margin="-8,2,0,0">
+            <Button Style="{StaticResource LinkButton}" Content="Open on GitHub" Command="{Binding OpenRepoCommand}" FontSize="12"/>
+            <Button Style="{StaticResource LinkButton}" Content="Report a problem" Command="{Binding ReportProblemCommand}" FontSize="12"/>
+          </WrapPanel>
+        </StackPanel>
       </StackPanel>
     </ScrollViewer>
   </Grid>

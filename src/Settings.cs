@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Xml.Serialization;
 using Microsoft.Win32;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     public sealed class DeviceSettings
     {
@@ -26,24 +26,50 @@ namespace PhoneSpeaker
         static readonly XmlSerializer Serializer = new XmlSerializer(typeof(AppSettings));
 
         public bool AskedAboutStartup;
+        public bool ToldAboutTray;
         public bool KeepAwake = true;
         public bool Notifications = true;
         public bool CloseToTray = true;
+        // No longer shown: hidden devices are listed in Settings instead. Kept so old settings files load.
         public bool ShowHidden;
         public bool RestWhenIdle = true;
         public int IdleMinutes = 10;
-        // Off: a phone that's already connected stays connected while resting; only searching stops.
-        public bool DisconnectWhenIdle = true;
+        // Off (the default): a phone that's already connected stays connected while resting; only searching
+        // stops. Disconnecting a paused iPhone and reconnecting it later is what most often leaves it silent.
+        public bool DisconnectWhenIdle;
         public List<DeviceSettings> Devices = new List<DeviceSettings>();
 
         public static string Folder
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PhoneSpeaker"); }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppInfo.Id); }
         }
 
         static string FilePath
         {
             get { return Path.Combine(Folder, "settings.xml"); }
+        }
+
+        // After a rename, bring settings and logs over from the old folder (once).
+        public static void MoveFromOldFolder()
+        {
+            if (Directory.Exists(Folder)) return;
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            foreach (string oldId in AppInfo.OldIds)
+            {
+                if (oldId == AppInfo.Id) continue;
+                string old = Path.Combine(appData, oldId);
+                if (!File.Exists(Path.Combine(old, "settings.xml"))) continue;
+                try
+                {
+                    Directory.CreateDirectory(Folder);
+                    foreach (string file in Directory.GetFiles(old))
+                        File.Copy(file, Path.Combine(Folder, Path.GetFileName(file)), true);
+                }
+                catch
+                {
+                }
+                return;
+            }
         }
 
         public static AppSettings Load()
@@ -92,7 +118,7 @@ namespace PhoneSpeaker
     static class AutoStart
     {
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        const string ValueName = "PhoneSpeaker";
+        const string ValueName = AppInfo.Id;
 
         static string Command
         {
@@ -132,7 +158,7 @@ namespace PhoneSpeaker
             }
         }
 
-        // If the app was moved since start-up was turned on, point the entry at the new location.
+        // If the app was moved or renamed since start-up was turned on, point the entry at it again.
         public static void Repair()
         {
             try
@@ -140,6 +166,12 @@ namespace PhoneSpeaker
                 using (var key = Registry.CurrentUser.OpenSubKey(RunKey, true))
                 {
                     if (key == null) return;
+                    foreach (string oldId in AppInfo.OldIds)
+                    {
+                        if (oldId == ValueName || key.GetValue(oldId) == null) continue;
+                        key.DeleteValue(oldId, false);
+                        key.SetValue(ValueName, Command);
+                    }
                     var current = key.GetValue(ValueName) as string;
                     if (current != null && current != Command) key.SetValue(ValueName, Command);
                 }

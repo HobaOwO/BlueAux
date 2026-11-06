@@ -3,7 +3,7 @@ using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     // The notification-area icon: a green dot while playing, grey while Bluetooth is off.
     sealed class TrayIcon : IDisposable
@@ -14,6 +14,7 @@ namespace PhoneSpeaker
         readonly Action exitApp;
         IntPtr iconHandle;
         string iconKey;
+        Action balloonAction;
 
         public TrayIcon(ReceiverEngine engine, Action showWindow, Action exitApp)
         {
@@ -22,14 +23,20 @@ namespace PhoneSpeaker
             this.exitApp = exitApp;
 
             var menu = new ContextMenuStrip();
-            menu.Items.Add("Open Phone Speaker");
+            menu.Items.Add("Open " + AppInfo.Name);
             menu.Opening += (s, e) => BuildMenu(menu);
             icon.ContextMenuStrip = menu;
             icon.MouseClick += (s, e) =>
             {
                 if (e.Button == MouseButtons.Left) showWindow();
             };
-            icon.BalloonTipClicked += (s, e) => showWindow();
+            icon.BalloonTipClicked += (s, e) =>
+            {
+                var action = balloonAction ?? showWindow;
+                balloonAction = null;
+                action();
+            };
+            icon.BalloonTipClosed += (s, e) => balloonAction = null;
             Update();
             icon.Visible = true;
         }
@@ -43,20 +50,20 @@ namespace PhoneSpeaker
             {
                 key = "off";
                 dot = Color.FromArgb(0x9A, 0x9A, 0x9A);
-                text = "Phone Speaker · Bluetooth is off";
+                text = AppInfo.Name + " · Bluetooth is off";
             }
             else if (streaming != null)
             {
                 key = "playing";
                 dot = Color.FromArgb(0x3C, 0xC8, 0x5A);
-                text = "Phone Speaker · playing from " + streaming.DisplayName;
+                text = AppInfo.Name + " · playing from " + streaming.DisplayName;
             }
             else
             {
                 key = "ready";
-                if (engine.PcIdle) text = "Phone Speaker · resting while the PC is idle";
-                else if (engine.AutoPaused) text = "Phone Speaker · auto-connect paused";
-                else text = "Phone Speaker · waiting for your phone";
+                if (engine.PcIdle) text = AppInfo.Name + " · resting while you're away";
+                else if (engine.AutoPaused) text = AppInfo.Name + " · disconnected";
+                else text = AppInfo.Name + " · waiting for your phone";
             }
 
             // NotifyIcon refuses tooltips longer than 63 characters.
@@ -75,9 +82,11 @@ namespace PhoneSpeaker
             }
         }
 
-        public void ShowBalloon(string title, string text)
+        // onClick runs when the notification is clicked; without one, clicking opens the window.
+        public void ShowBalloon(string title, string text, Action onClick)
         {
-            icon.ShowBalloonTip(4000, title, text, ToolTipIcon.None);
+            balloonAction = onClick;
+            icon.ShowBalloonTip(5000, title, text, ToolTipIcon.None);
         }
 
         public void Dispose()
@@ -91,7 +100,7 @@ namespace PhoneSpeaker
         void BuildMenu(ContextMenuStrip menu)
         {
             menu.Items.Clear();
-            var open = new ToolStripMenuItem("Open Phone Speaker", null, (s, e) => showWindow());
+            var open = new ToolStripMenuItem("Open " + AppInfo.Name, null, (s, e) => showWindow());
             open.Font = new Font(open.Font, FontStyle.Bold);
             menu.Items.Add(open);
             menu.Items.Add(new ToolStripSeparator());
@@ -104,8 +113,8 @@ namespace PhoneSpeaker
                     var current = session;
                     if (current.State == LinkState.Streaming)
                     {
+                        menu.Items.Add(new ToolStripMenuItem("No sound? Fix " + current.DisplayName, null, (s, e) => current.FixCommand.Execute(null)));
                         menu.Items.Add(new ToolStripMenuItem("Disconnect " + current.DisplayName, null, (s, e) => current.DisconnectCommand.Execute(null)));
-                        menu.Items.Add(new ToolStripMenuItem("Fix audio for " + current.DisplayName, null, (s, e) => current.FixCommand.Execute(null)));
                     }
                     else if (current.State == LinkState.Connecting)
                     {
@@ -122,11 +131,7 @@ namespace PhoneSpeaker
                 menu.Items.Add(new ToolStripMenuItem("Turn on Bluetooth", null, (s, e) => engine.TurnOnBluetooth()));
             }
 
-            if (engine.AutoPaused && engine.RadioOn)
-                menu.Items.Add(new ToolStripMenuItem("Resume auto-connect", null, (s, e) => engine.SetAutoPaused(false)));
-
-            if (visible.Count > 0 || !engine.RadioOn) menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem("Bluetooth settings", null, (s, e) => Shell.Open("ms-settings:bluetooth")));
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("Exit", null, (s, e) => exitApp()));
         }
     }

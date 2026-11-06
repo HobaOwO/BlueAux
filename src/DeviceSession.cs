@@ -6,7 +6,7 @@ using Windows.Devices.Bluetooth;
 using Windows.Foundation;
 using Windows.Media.Audio;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     public enum LinkState { Off, Idle, Waiting, Paused, Connecting, Streaming }
 
@@ -41,6 +41,10 @@ namespace PhoneSpeaker
         bool attempting;
         bool manualAttempt;
         bool paused;
+        bool fixing;
+        bool settling;
+        bool openedByRebuild;
+        DateTime openedAt = DateTime.MinValue;
         bool expanded;
         bool shutDown;
         int failures;
@@ -48,6 +52,7 @@ namespace PhoneSpeaker
         DateTime nextAttempt;
         DateTime nextStart;
         DateTime lostAt = DateTime.MinValue;
+        DateTime manualFailedAt = DateTime.MinValue;
         DateTime? streamingSince;
         LinkState state = LinkState.Idle;
         string statusText = "";
@@ -95,7 +100,23 @@ namespace PhoneSpeaker
         public bool ShowDisconnect { get { return state == LinkState.Streaming; } }
         public string Glyph { get { return isTablet ? "" : ""; } }
         public bool IsHidden { get { return settings.Hidden; } }
-        public string HideText { get { return settings.Hidden ? "Show" : "Hide"; } }
+        public bool IsFixing { get { return fixing; } }
+        public bool IsSettling { get { return fixing && settling; } }
+
+        // The current connection is one we opened ourselves (not the phone, not a rebuild),
+        // so SoundWatch should reconnect once if it stays silent (see Settle).
+        public bool ShouldSettle { get; private set; }
+        public string HideText { get { return settings.Hidden ? "Unhide" : "Hide"; } }
+
+        // One line under the device's name in Settings.
+        public string SettingsHint
+        {
+            get
+            {
+                if (settings.Hidden) return "Hidden: never connects and isn't listed";
+                return settings.AutoConnect ? "Connects by itself when it's nearby" : "Connects only when you press Connect";
+            }
+        }
         public string HideGlyph { get { return settings.Hidden ? "" : ""; } }
 
         public string DisplayName
@@ -147,6 +168,7 @@ namespace PhoneSpeaker
                     nextAttempt = DateTime.UtcNow;
                 }
                 Raise();
+                Raise("SettingsHint");
                 UpdateState();
             }
         }
@@ -284,15 +306,39 @@ namespace PhoneSpeaker
             }
         }
 
-        async void FixAudio()
+        // Rebuild the connection from scratch: what gets a "connected but silent" phone going again
+        // (see SoundWatch, which also does it automatically).
+        void FixAudio()
         {
-            Log.Info("{0}: rebuilding the audio connection", DisplayName);
+            Rebuild(false);
+        }
+
+        // The first connection we make to a phone that just came back (in range again, Bluetooth back on)
+        // can come up connected but silent, while one made right after it works. SoundWatch calls this
+        // once, a few seconds after such a connection, if no sound has come through yet.
+        public void Settle()
+        {
+            Rebuild(true);
+        }
+
+        async void Rebuild(bool settle)
+        {
+            if (fixing) return;
+            Log.Info(settle ? "{0}: no sound yet, so reconnecting once to make sure it works" : "{0}: rebuilding the audio connection", DisplayName);
+            fixing = true;
+            settling = settle;
             paused = false;
             // Hold off the background restart while we rebuild it ourselves.
             Reset(TimeSpan.FromSeconds(30));
             await Task.Delay(1500);
             nextStart = DateTime.UtcNow;
             Connect(true);
+            if (!attempting)
+            {
+                fixing = false;
+                settling = false;
+                UpdateState();
+            }
         }
 
         void ToggleHidden()
@@ -308,6 +354,7 @@ namespace PhoneSpeaker
             Raise("IsHidden");
             Raise("HideText");
             Raise("HideGlyph");
+            Raise("SettingsHint");
             UpdateState();
             engine.NotifyVisibilityChanged();
         }
@@ -352,6 +399,8 @@ namespace PhoneSpeaker
                 {
                     failures = 0;
                     lastError = null;
+                    openedAt = DateTime.UtcNow;
+                    openedByRebuild = fixing;
                     if (conn.State == AudioPlaybackConnectionState.Opened) engine.ClaimStream(this);
                     else nextAttempt = DateTime.UtcNow.AddSeconds(10);
                 }
@@ -359,6 +408,12 @@ namespace PhoneSpeaker
                 {
                     string reason = Describe(result.Status);
                     string detail = result.ExtendedError != null ? " (" + result.ExtendedError.Message.Trim() + ")" : "";
+                    // Windows says "a device attached to the system is not functioning" when the phone is out of range.
+                    if (result.ExtendedError != null && result.ExtendedError.HResult == unchecked((int)0x8007001F))
+                    {
+                        reason = "Not found nearby";
+                        detail = "";
+                    }
                     Log.Info("{0}: {1}{2}", DisplayName, reason.ToLowerInvariant(), detail);
                     Fail(reason);
                     // Next attempt starts from a fresh object.
@@ -375,6 +430,8 @@ namespace PhoneSpeaker
             {
                 attempting = false;
                 manualAttempt = false;
+                fixing = false;
+                settling = false;
                 UpdateState();
             }
         }
@@ -394,7 +451,16 @@ namespace PhoneSpeaker
             failures++;
             lastError = reason;
             nextAttempt = DateTime.UtcNow + RetryDelay();
+            if (manualAttempt) manualFailedAt = DateTime.UtcNow;
         }
+
+        // You pressed Connect and it didn't work in the last few seconds: worth saying so on screen.
+        public bool RecentlyFailedToConnect
+        {
+            get { return DateTime.UtcNow - manualFailedAt < TimeSpan.FromSeconds(15) && !isOpen && !attempting; }
+        }
+
+        public string LastError { get { return lastError; } }
 
         TimeSpan RetryDelay()
         {
@@ -498,9 +564,15 @@ namespace PhoneSpeaker
             streamingSince = DateTime.Now;
             settings.LastConnected = DateTime.Now;
             engine.SaveSettings();
+            // Did we dial it, or did the phone connect by itself? Windows may report the connection
+            // a moment before or after our OpenAsync returns.
+            bool justOpened = DateTime.UtcNow - openedAt < TimeSpan.FromSeconds(15);
+            bool rebuilt = attempting ? fixing : justOpened && openedByRebuild;
+            ShouldSettle = (attempting || justOpened) && !rebuilt;
             Log.Info("{0}: connected, playing audio", DisplayName);
             UpdateState();
-            engine.OnDeviceConnected(this);
+            // A rebuild already said "connected" the first time round.
+            if (!rebuilt) engine.OnDeviceConnected(this);
         }
 
         public void MarkLost()
@@ -540,11 +612,19 @@ namespace PhoneSpeaker
         async void LookUpBluetoothDevice()
         {
             ulong raw;
-            if (address == null || !ulong.TryParse(address, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out raw)) return;
+            if (address == null || !ulong.TryParse(address, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out raw))
+            {
+                Log.Info("Found {0}", DisplayName);
+                return;
+            }
             try
             {
                 var device = await BluetoothDevice.FromBluetoothAddressAsync(raw);
-                if (device == null || shutDown) return;
+                if (device == null || shutDown)
+                {
+                    Log.Info("Found {0}", DisplayName);
+                    return;
+                }
                 bluetoothDevice = device;
                 bluetoothName = device.Name;
                 var major = device.ClassOfDevice.MajorClass;
@@ -566,9 +646,11 @@ namespace PhoneSpeaker
                 RaiseNames();
                 Raise("Glyph");
                 UpdateState();
+                Log.Info("Found {0}", DisplayName);
             }
             catch (Exception ex)
             {
+                Log.Info("Found {0}", DisplayName);
                 Log.Error(DisplayName + ": couldn't read Bluetooth details", ex);
             }
         }
@@ -596,7 +678,7 @@ namespace PhoneSpeaker
             LinkState next;
             if (!engine.RadioOn) next = LinkState.Off;
             else if (isOpen) next = LinkState.Streaming;
-            else if (attempting && manualAttempt) next = LinkState.Connecting;
+            else if ((attempting && manualAttempt) || fixing) next = LinkState.Connecting;
             else if (paused) next = LinkState.Paused;
             else if (settings.AutoConnect && !settings.Hidden && !engine.AutoPaused && !engine.PcIdle) next = LinkState.Waiting;
             else next = LinkState.Idle;

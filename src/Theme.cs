@@ -5,7 +5,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Win32;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     // Follows the Windows light/dark setting and accent colour, and gives windows the Mica backdrop on Windows 11.
     static class Theme
@@ -53,6 +53,7 @@ namespace PhoneSpeaker
                 Add(d, "HeroNeutral", 0x1FFFFFFF);
                 Add(d, "Success", 0xFF6CCB5F);
                 Add(d, "Caution", 0xFFFCE100);
+                Add(d, "CautionSoft", 0xFF433519);
                 Add(d, "Neutral", 0xFF9D9D9D);
                 Add(d, "OnAccent", 0xFF000000);
                 Add(d, "Tooltip", 0xFF2C2C2C);
@@ -75,6 +76,7 @@ namespace PhoneSpeaker
                 Add(d, "HeroNeutral", 0x0F000000);
                 Add(d, "Success", 0xFF0F7B0F);
                 Add(d, "Caution", 0xFF9D5D00);
+                Add(d, "CautionSoft", 0xFFFFF4CE);
                 Add(d, "Neutral", 0xFF8A8A8A);
                 Add(d, "OnAccent", 0xFFFFFFFF);
                 Add(d, "Tooltip", 0xFFF9F9F9);

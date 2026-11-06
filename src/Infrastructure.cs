@@ -10,13 +10,26 @@ using System.Windows.Input;
 using Windows.Foundation;
 
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
-[assembly: System.Reflection.AssemblyTitle("Phone Speaker")]
-[assembly: System.Reflection.AssemblyProduct("Phone Speaker")]
-[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyTitle(BlueAux.AppInfo.Name)]
+[assembly: System.Reflection.AssemblyProduct(BlueAux.AppInfo.Name)]
+[assembly: System.Reflection.AssemblyDescription(BlueAux.AppInfo.Tagline)]
+[assembly: System.Reflection.AssemblyVersion(BlueAux.AppInfo.Version + ".0.0")]
+[assembly: System.Reflection.AssemblyFileVersion(BlueAux.AppInfo.Version + ".0.0")]
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
+    public static class AppInfo
+    {
+        public const string Name = "BlueAux";
+        public const string Tagline = "Use your PC as a Bluetooth speaker for your phone";
+        // Used for the settings folder, the start-up entry and the single-instance lock.
+        public const string Id = "BlueAux";
+        public const string Version = "1.1";
+        public const string RepoUrl = "https://github.com/HobaOwO/BlueAux";
+        // Earlier Ids, so settings and the start-up entry carry over after a rename.
+        public static readonly string[] OldIds = { "PhoneSpeaker" };
+    }
+
     public abstract class ObservableObject : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler PropertyChanged;

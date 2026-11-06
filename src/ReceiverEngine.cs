@@ -7,7 +7,7 @@ using Windows.Devices.Enumeration;
 using Windows.Devices.Radios;
 using Windows.Media.Audio;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     public enum RadioStatus { Unknown, On, Off, Missing }
 
@@ -23,11 +23,11 @@ namespace PhoneSpeaker
         readonly DispatcherTimer timer;
         readonly ObservableCollection<DeviceSession> sessions = new ObservableCollection<DeviceSession>();
         readonly ActivityMonitor activity = new ActivityMonitor();
+        readonly SoundWatch sound = new SoundWatch();
         DeviceWatcher watcher;
         DeviceSession active;
         bool autoPaused;
         bool pcIdle;
-        DateTime nextAudioCheck;
         Radio bluetoothRadio;
         RadioStatus radioStatus = RadioStatus.Unknown;
         DateTime nextRadioCheck;
@@ -77,13 +77,13 @@ namespace PhoneSpeaker
         // looking for phones until someone is back, like a chat app showing you as "idle".
         public bool PcIdle { get { return pcIdle; } }
 
+        // The phone is connected but this PC's volume is muted or at zero.
+        public bool PcSilenced { get { return sound.PcSilenced; } }
+
         void UpdateIdle(DateTime now)
         {
-            if (active != null && now >= nextAudioCheck)
-            {
-                nextAudioCheck = now.AddSeconds(5);
-                if (PhoneAudioMeter.IsPlaying()) activity.NoteAudio();
-            }
+            // Checks the connected phone's sound (and repairs a silent connection); music counts as use.
+            if (sound.Tick(active, now)) activity.NoteAudio();
 
             int minutes = Math.Max(1, settings.IdleMinutes);
             bool idle = settings.RestWhenIdle && activity.IdleFor() >= TimeSpan.FromMinutes(minutes);
@@ -109,7 +109,9 @@ namespace PhoneSpeaker
 
         public void Start()
         {
-            Log.Info("Phone Speaker started");
+            Log.Info("{0} started", AppInfo.Name);
+            sound.Init(AppSettings.Folder);
+            sound.Changed += NotifyChanged;
             StartWatcher();
             CheckRadio();
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
@@ -327,7 +329,7 @@ namespace PhoneSpeaker
             int index = 0;
             while (index < sessions.Count && sessions[index].LastConnected >= session.LastConnected) index++;
             sessions.Insert(index, session);
-            Log.Info("Found {0}", session.DisplayName);
+            // Logs "Found <name>" once it knows the phone's current name (Windows may still use an old one).
             session.Initialize();
             NotifyChanged();
         }

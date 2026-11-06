@@ -7,7 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SDColor = System.Drawing.Color;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     // Draws the app icon (a speaker on a blue-violet tile) so we don't need image files.
     static class IconFactory

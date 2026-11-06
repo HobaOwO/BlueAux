@@ -10,13 +10,13 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     static class Xaml
     {
         public static object Load(string name)
         {
-            using (Stream stream = typeof(Xaml).Assembly.GetManifestResourceStream("PhoneSpeaker." + name))
+            using (Stream stream = typeof(Xaml).Assembly.GetManifestResourceStream("BlueAux." + name))
                 return XamlReader.Load(stream);
         }
     }
@@ -32,7 +32,7 @@ namespace PhoneSpeaker
             this.settings = settings;
             this.exitApp = exitApp;
 
-            Title = "Phone Speaker";
+            Title = AppInfo.Name;
             Width = 440;
             Height = Math.Min(740, SystemParameters.WorkArea.Height - 40);
             MinWidth = 380;

@@ -6,12 +6,12 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 
-namespace PhoneSpeaker
+namespace BlueAux
 {
     public static class Program
     {
-        const string MutexName = "Local\\PhoneSpeaker.SingleInstance";
-        const string ShowEventName = "Local\\PhoneSpeaker.Show";
+        const string MutexName = "Local\\" + AppInfo.Id + ".SingleInstance";
+        const string ShowEventName = "Local\\" + AppInfo.Id + ".Show";
 
         [STAThread]
         public static int Main(string[] args)
@@ -71,6 +71,7 @@ namespace PhoneSpeaker
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+            AppSettings.MoveFromOldFolder();
             Directory.CreateDirectory(AppSettings.Folder);
             Log.Init(AppSettings.Folder);
             DispatcherUnhandledException += (s, args) =>
@@ -112,10 +113,16 @@ namespace PhoneSpeaker
             {
                 if (idle) TrimMemorySoon();
             };
-            engine.DeviceConnected += session => Notify(session.DisplayName + " connected", "Its audio now plays on this PC.");
+            // Clicking the "connected" notification rebuilds the connection: the quickest way out of
+            // "connected but no sound" when the automatic check can't tell.
+            engine.DeviceConnected += session => Notify(
+                session.DisplayName + " connected",
+                "Its audio now plays on this PC. No sound? Press play, then click here.",
+                () => session.FixCommand.Execute(null));
             engine.DeviceDisconnected += (session, willReconnect) => Notify(
                 session.DisplayName + " disconnected",
-                willReconnect ? "It will reconnect by itself when it's back in range." : "Press Connect when you want it back.");
+                willReconnect ? "It will reconnect by itself when it's back in range." : "Press Connect when you want it back.",
+                null);
             engine.Start();
 
             var listener = new Thread(ListenForShowRequests) { IsBackground = true, Name = "Show listener" };
@@ -163,6 +170,14 @@ namespace PhoneSpeaker
             closed.Closed -= OnWindowClosed;
             if (window == closed) window = null;
             viewModel.IsSettingsOpen = false;
+            viewModel.IsMoreOpen = false;
+            if (!exiting && !settings.ToldAboutTray)
+            {
+                // Only once: people expect closing to quit, so say where it went.
+                settings.ToldAboutTray = true;
+                settings.Save();
+                tray.ShowBalloon(AppInfo.Name + " is still running", "It waits here in the tray so your phone can connect any time. Right-click the icon to exit.", null);
+            }
             TrimMemorySoon();
         }
 
@@ -183,17 +198,17 @@ namespace PhoneSpeaker
             Native.SetThreadExecutionState(wantAwake ? Native.EsContinuous | Native.EsSystemRequired : Native.EsContinuous);
         }
 
-        void Notify(string title, string text)
+        void Notify(string title, string text, Action onClick)
         {
             if (!settings.Notifications) return;
             if (window != null && window.IsVisible && window.IsActive) return;
-            tray.ShowBalloon(title, text);
+            tray.ShowBalloon(title, text, onClick);
         }
 
         void ExitApp()
         {
             if (exiting) return;
-            Log.Info("Phone Speaker closed");
+            Log.Info("{0} closed", AppInfo.Name);
             Cleanup();
             if (window != null)
             {
