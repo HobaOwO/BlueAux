@@ -17,6 +17,8 @@ Play Spotify, YouTube, podcasts or anything else on your phone and hear it throu
 
 ## Why?
 
+Mainly so you dont hear your friends scrolling through their mic.
+
 Windows can play your phone's audio, but there's no easy way to use that. Other apps make you press **Connect** every single time, and often end up "connected" with no sound at all.
 
 BlueAux fixes both:
