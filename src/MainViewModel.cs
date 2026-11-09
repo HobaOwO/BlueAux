@@ -21,6 +21,7 @@ namespace BlueAux
         string heroState = "Loading";
         string heroTitle = "";
         string heroSubtitle = "";
+        string heroDevice = "";
         string heroGlyph = "";
         string heroAction;
         bool heroActionPrimary = true;
@@ -96,7 +97,7 @@ namespace BlueAux
         public ICommand IdleMoreCommand { get; private set; }
 
         public string AppName { get { return AppInfo.Name; } }
-        public string AboutText { get { return AppInfo.Name + " " + AppInfo.Version + " · free and open source"; } }
+        public string AboutText { get { return AppInfo.Name + " " + AppInfo.Version; } }
 
         public ListCollectionView Devices { get { return devices; } }
         public ListCollectionView AllDevices { get { return allDevices; } }
@@ -122,6 +123,8 @@ namespace BlueAux
         public string HeroState { get { return heroState; } }
         public string HeroTitle { get { return heroTitle; } }
         public string HeroSubtitle { get { return heroSubtitle; } }
+        // The phone a song is playing from (empty when the title already is the phone).
+        public string HeroDevice { get { return heroDevice; } }
         public string HeroGlyph { get { return heroGlyph; } }
         public string HeroActionText { get { return heroAction; } }
         public bool ShowPrimaryAction { get { return heroAction != null && heroActionPrimary; } }
@@ -247,91 +250,95 @@ namespace BlueAux
             }
             string name = mainDevice != null ? mainDevice.DisplayName : "your phone";
 
-            string state, title, subtitle, glyph = "\uE702", action = null;
+            // The card at the top: one line for what it is (the song, or the phone), one for how it's doing,
+            // and the phone's name under a song. Longer explanations live in tooltips.
+            string state, title = name, subtitle = "", device = "", glyph = "", action = null;
             bool primary = true;
             if (engine.RadioStatus == RadioStatus.Missing)
             {
                 state = "Off";
                 title = "No Bluetooth found";
-                subtitle = "This PC's Bluetooth seems to be off or unplugged.";
-                action = "Open Bluetooth settings";
+                subtitle = "It may be off or unplugged";
+                action = "Bluetooth settings";
             }
             else if (!engine.RadioOn)
             {
                 state = "Off";
                 title = "Bluetooth is off";
-                subtitle = "Turn it on so your phone can play through this PC.";
-                action = "Turn on Bluetooth";
+                action = "Turn on";
             }
             else if (visible.Count == 0)
             {
                 state = engine.EnumerationDone ? "Empty" : "Loading";
-                title = engine.EnumerationDone ? "Pair your phone first" : "Looking for your phone…";
-                subtitle = engine.EnumerationDone
-                    ? (hiddenCount > 0
-                        ? "All your devices are hidden. Unhide one in Settings, or pair another phone."
-                        : "Add your phone in Windows Bluetooth settings once. After that it shows up here.")
-                    : "";
-                glyph = "\uE8EA";
+                title = !engine.EnumerationDone ? "Looking for phones…" : hiddenCount > 0 ? "All devices are hidden" : "No phone paired yet";
+                if (engine.EnumerationDone && hiddenCount > 0) subtitle = "Unhide one in Settings";
+                glyph = "";
                 if (engine.EnumerationDone) action = "Pair a phone";
             }
             else if (streaming.Count > 0)
             {
                 state = "Streaming";
-                title = "Playing from " + string.Join(" & ", streaming.Select(s => s.DisplayName));
-                var since = streaming[0].StreamingSince;
-                subtitle = "Connected for " + DeviceSession.FormatDuration(since.HasValue ? DateTime.Now - since.Value : TimeSpan.Zero);
+                string phones = string.Join(" & ", streaming.Select(s => s.DisplayName));
+                // An iPhone tells us the song while it plays. Only while playing: apps like TikTok don't
+                // report themselves, so "paused" can mean the last music app is paused while another plays.
+                string song = engine.Media.PlaybackOf(streaming[0]) == PhonePlayback.Playing ? engine.Media.TitleOf(streaming[0]) : null;
+                if (song != null)
+                {
+                    title = song;
+                    subtitle = engine.Media.ArtistOf(streaming[0]) ?? "";
+                    device = phones;
+                }
+                else
+                {
+                    title = phones;
+                    subtitle = "Connected";
+                }
                 action = "Disconnect";
                 primary = false;
             }
             else if (connecting != null)
             {
                 state = "Connecting";
-                title = "Connecting to " + connecting.DisplayName + "…";
-                subtitle = connecting.IsSettling ? "Making sure the sound works."
-                    : connecting.IsFixing ? "Keep the music playing on your phone."
-                    : "Keep the phone nearby with Bluetooth on.";
+                title = connecting.DisplayName;
+                subtitle = connecting.IsSettling ? "Making sure the sound works…"
+                    : connecting.IsFixing ? "Reconnecting, keep it playing…"
+                    : "Connecting…";
             }
             else if (mainDevice != null && mainDevice.RecentlyFailedToConnect)
             {
                 state = "Failed";
-                title = "Couldn't connect to " + name;
                 subtitle = mainDevice.LastError == "Not found nearby" || mainDevice.LastError == null
-                    ? "Make sure it's nearby with Bluetooth on, then try again."
-                    : mainDevice.LastError + ". Try again in a moment.";
-                glyph = "\uE7BA";
+                    ? "Couldn't connect. Is Bluetooth on?"
+                    : mainDevice.LastError;
+                glyph = "";
                 action = "Try again";
             }
             else if (engine.PcIdle)
             {
                 state = "Resting";
-                title = "Resting";
-                subtitle = "Nobody is using this PC, so it stopped looking for " + name + ". It starts again when you're back.";
-                glyph = "\uE708";
+                subtitle = "Resting while you're away";
+                glyph = "";
                 action = "Connect";
             }
             else if (engine.AutoPaused)
             {
                 state = "Paused";
-                title = "Disconnected";
-                subtitle = name + " won't reconnect by itself until you press Connect.";
-                glyph = "\uE769";
+                subtitle = "Disconnected";
+                glyph = "";
                 action = "Connect";
             }
             else if (visible.Any(s => s.State == LinkState.Waiting))
             {
                 state = "Waiting";
-                title = "Waiting for " + name;
-                subtitle = "It connects by itself when it's nearby. You can also pick this PC in your phone's Bluetooth settings.";
-                action = "Connect now";
+                subtitle = "Connects when it's nearby";
+                action = "Connect";
                 primary = false;
             }
             else
             {
                 state = "Idle";
-                title = "Ready to play";
-                subtitle = "Press Connect, or pick this PC in your phone's Bluetooth settings.";
-                glyph = "\uE767";
+                subtitle = "Not connected";
+                glyph = "";
                 action = "Connect";
             }
 
@@ -342,6 +349,7 @@ namespace BlueAux
             }
             Set(ref heroTitle, title, "HeroTitle");
             Set(ref heroSubtitle, subtitle, "HeroSubtitle");
+            Set(ref heroDevice, device, "HeroDevice");
             Set(ref heroGlyph, glyph, "HeroGlyph");
             bool actionChanged = Set(ref heroAction, action, "HeroActionText");
             if (Set(ref heroActionPrimary, primary, "HeroActionPrimary") || actionChanged)

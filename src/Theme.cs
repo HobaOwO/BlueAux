@@ -32,31 +32,34 @@ namespace BlueAux
         static void Apply()
         {
             IsDark = ReadIsDark();
-            var accent = ReadAccent();
+            var accent = ReadAccent(IsDark ? 1 : 4);
+            var accentText = ReadAccent(IsDark ? 0 : 5);
             var d = new ResourceDictionary();
 
+            // Colour tokens from Fluent 2, the Windows 11 design system. Each key names the Fluent token it
+            // follows; Styles.xaml uses only these keys, so both themes stay consistent.
             if (IsDark)
             {
-                Add(d, "TextPrimary", 0xFFFFFFFF);
-                Add(d, "TextSecondary", 0xC8FFFFFF);
-                Add(d, "TextTertiary", 0x8AFFFFFF);
-                Add(d, "WindowBackground", 0xFF202020);
-                Add(d, "CardFill", UseMica ? 0x0EFFFFFF : 0xFF2B2B2B);
-                Add(d, "CardStroke", UseMica ? 0x1A000000 : 0xFF1D1D1D);
-                Add(d, "CardSolid", 0xFF2C2C2C);
-                Add(d, "Subtle", 0x12FFFFFF);
-                Add(d, "SubtleHover", 0x1CFFFFFF);
-                Add(d, "SubtlePressed", 0x0AFFFFFF);
-                Add(d, "ControlStroke", 0x14FFFFFF);
-                Add(d, "Input", 0x0FFFFFFF);
-                Add(d, "InputFocused", 0xB31E1E1E);
-                Add(d, "HeroNeutral", 0x1FFFFFFF);
-                Add(d, "Success", 0xFF6CCB5F);
-                Add(d, "Caution", 0xFFFCE100);
-                Add(d, "CautionSoft", 0xFF433519);
-                Add(d, "Neutral", 0xFF9D9D9D);
-                Add(d, "OnAccent", 0xFF000000);
-                Add(d, "Tooltip", 0xFF2C2C2C);
+                Add(d, "TextPrimary", 0xFFFFFFFF);        // TextFillColorPrimary
+                Add(d, "TextSecondary", 0xC5FFFFFF);      // TextFillColorSecondary
+                Add(d, "TextTertiary", 0x87FFFFFF);       // TextFillColorTertiary
+                Add(d, "WindowBackground", 0xFF202020);   // SolidBackgroundFillColorBase
+                Add(d, "CardFill", UseMica ? 0x0DFFFFFF : 0xFF2B2B2B);   // CardBackgroundFillColorDefault
+                Add(d, "CardStroke", UseMica ? 0x19000000 : 0xFF1D1D1D); // CardStrokeColorDefault
+                Add(d, "ControlFill", 0x0FFFFFFF);        // ControlFillColorDefault
+                Add(d, "ControlFillHover", 0x15FFFFFF);   // ControlFillColorSecondary
+                Add(d, "ControlFillPressed", 0x08FFFFFF); // ControlFillColorTertiary
+                Add(d, "ControlStroke", 0x12FFFFFF);      // ControlStrokeColorDefault
+                Add(d, "SubtleHover", 0x0FFFFFFF);        // SubtleFillColorSecondary
+                Add(d, "SubtlePressed", 0x0AFFFFFF);      // SubtleFillColorTertiary
+                Add(d, "DividerStroke", 0x15FFFFFF);            // DividerStrokeColorDefault
+                Add(d, "Input", 0x0FFFFFFF);              // ControlFillColorDefault
+                Add(d, "InputFocused", 0xB31E1E1E);       // ControlFillColorInputActive
+                Add(d, "HeroNeutral", 0x15FFFFFF);        // ControlFillColorSecondary
+                Add(d, "Caution", 0xFFFCE100);            // SystemFillColorCaution
+                Add(d, "CautionSoft", 0xFF433519);        // SystemFillColorCautionBackground
+                Add(d, "OnAccent", 0xFF000000);           // TextOnAccentFillColorPrimary
+                Add(d, "Tooltip", 0xFF2C2C2C);            // AcrylicInAppFillColorDefault (solid)
             }
             else
             {
@@ -65,27 +68,29 @@ namespace BlueAux
                 Add(d, "TextTertiary", 0x72000000);
                 Add(d, "WindowBackground", 0xFFF3F3F3);
                 Add(d, "CardFill", UseMica ? 0xB3FFFFFF : 0xFFFFFFFF);
-                Add(d, "CardStroke", 0x12000000);
-                Add(d, "CardSolid", 0xFFFBFBFB);
-                Add(d, "Subtle", 0xB3FFFFFF);
-                Add(d, "SubtleHover", 0x80F9F9F9);
-                Add(d, "SubtlePressed", 0x4DF9F9F9);
+                Add(d, "CardStroke", 0x0F000000);
+                Add(d, "ControlFill", 0xB3FFFFFF);
+                Add(d, "ControlFillHover", 0x80F9F9F9);
+                Add(d, "ControlFillPressed", 0x4DF9F9F9);
                 Add(d, "ControlStroke", 0x18000000);
+                Add(d, "SubtleHover", 0x09000000);
+                Add(d, "SubtlePressed", 0x06000000);
+                Add(d, "DividerStroke", 0x0F000000);
                 Add(d, "Input", 0xB3FFFFFF);
                 Add(d, "InputFocused", 0xFFFFFFFF);
                 Add(d, "HeroNeutral", 0x0F000000);
-                Add(d, "Success", 0xFF0F7B0F);
                 Add(d, "Caution", 0xFF9D5D00);
                 Add(d, "CautionSoft", 0xFFFFF4CE);
-                Add(d, "Neutral", 0xFF8A8A8A);
                 Add(d, "OnAccent", 0xFFFFFFFF);
                 Add(d, "Tooltip", 0xFFF9F9F9);
             }
 
+            // AccentFillColorDefault / Secondary / Tertiary, and AccentTextFillColorPrimary for links.
             d["Accent"] = Frozen(accent);
             d["AccentHover"] = Frozen(Color.FromArgb(0xE6, accent.R, accent.G, accent.B));
             d["AccentPressed"] = Frozen(Color.FromArgb(0xCC, accent.R, accent.G, accent.B));
             d["AccentSoft"] = Frozen(Color.FromArgb(0x59, accent.R, accent.G, accent.B));
+            d["AccentText"] = Frozen(accentText);
 
             var merged = app.Resources.MergedDictionaries;
             if (current != null) merged.Remove(current);
@@ -140,9 +145,10 @@ namespace BlueAux
             }
         }
 
-        // AccentPalette holds 8 RGBA shades from lightest to darkest; Windows uses
-        // "light 2" (index 1) on dark backgrounds and "dark 1" (index 4) on light ones.
-        static Color ReadAccent()
+        // AccentPalette holds 8 RGBA shades from lightest to darkest: light 3, light 2, light 1, base,
+        // dark 1, dark 2, dark 3. Fluent fills with light 2 on dark backgrounds and dark 1 on light ones,
+        // and colours text with light 3 / dark 2.
+        static Color ReadAccent(int shade)
         {
             try
             {
@@ -151,7 +157,7 @@ namespace BlueAux
                     var palette = key == null ? null : key.GetValue("AccentPalette") as byte[];
                     if (palette != null && palette.Length >= 32)
                     {
-                        int i = (IsDark ? 1 : 4) * 4;
+                        int i = shade * 4;
                         return Color.FromRgb(palette[i], palette[i + 1], palette[i + 2]);
                     }
                 }
@@ -159,7 +165,13 @@ namespace BlueAux
             catch
             {
             }
-            return IsDark ? Color.FromRgb(0x60, 0xCD, 0xFF) : Color.FromRgb(0x00, 0x5F, 0xB8);
+            switch (shade)
+            {
+                case 0: return Color.FromRgb(0x99, 0xEB, 0xFF);
+                case 1: return Color.FromRgb(0x60, 0xCD, 0xFF);
+                case 5: return Color.FromRgb(0x00, 0x3E, 0x92);
+                default: return Color.FromRgb(0x00, 0x5F, 0xB8);
+            }
         }
 
         static int WindowsBuild()

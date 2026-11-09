@@ -33,13 +33,16 @@ namespace BlueAux
             this.exitApp = exitApp;
 
             Title = AppInfo.Name;
-            Width = 440;
-            Height = Math.Min(740, SystemParameters.WorkArea.Height - 40);
-            MinWidth = 380;
-            MinHeight = 520;
+            // As tall as what it shows (Settings scrolls past the limit), so the main page stays small.
+            Width = 360;
+            SizeToContent = SizeToContent.Height;
+            MaxHeight = Math.Min(640, SystemParameters.WorkArea.Height - 40);
+            MinWidth = 320;
+            MinHeight = 200;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             FontFamily = new FontFamily("Segoe UI");
-            FontSize = 13;
+            // Fluent's Body size; Styles.xaml holds the rest of the type ramp.
+            FontSize = 14;
             UseLayoutRounding = true;
             SetResourceReference(ForegroundProperty, "TextPrimary");
             SetResourceReference(BackgroundProperty, "WindowBackground");
@@ -86,7 +89,7 @@ namespace BlueAux
         }
     }
 
-    // The big circle at the top: pulses while waiting for a phone, shows dancing bars while playing.
+    // The circle in the now-playing card: pulses while waiting for a phone, shows dancing bars while playing.
     // Animations only run while the window is visible, so the app costs nothing in the tray.
     sealed class HeroAnimator
     {
@@ -175,7 +178,7 @@ namespace BlueAux
         static void Pulse(Ellipse ring, TimeSpan delay, double seconds)
         {
             var scale = (ScaleTransform)ring.RenderTransform;
-            var grow = new DoubleAnimation(1.0, 1.7, TimeSpan.FromSeconds(seconds))
+            var grow = new DoubleAnimation(1.0, 1.45, TimeSpan.FromSeconds(seconds))
             {
                 BeginTime = delay,
                 RepeatBehavior = RepeatBehavior.Forever,

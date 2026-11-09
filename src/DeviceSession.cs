@@ -94,6 +94,8 @@ namespace BlueAux
         public LinkState State { get { return state; } }
         public string StateName { get { return state.ToString(); } }
         public string StatusText { get { return statusText; } }
+        // The status worth a line under the name: "Not connected" says nothing the Connect button doesn't.
+        public string ShortStatus { get { return state == LinkState.Idle && statusText == "Not connected" ? "" : statusText; } }
         public DateTime? StreamingSince { get { return streamingSince; } }
         public bool ShowConnect { get { return state == LinkState.Idle || state == LinkState.Waiting || state == LinkState.Paused; } }
         public bool ShowConnecting { get { return state == LinkState.Connecting; } }
@@ -102,6 +104,8 @@ namespace BlueAux
         public bool IsHidden { get { return settings.Hidden; } }
         public bool IsFixing { get { return fixing; } }
         public bool IsSettling { get { return fixing && settling; } }
+        // Windows' ID for the phone's Bluetooth audio pairing, once we've looked it up.
+        public string BluetoothDeviceId { get { return bluetoothDevice != null ? bluetoothDevice.DeviceId : null; } }
 
         // The current connection is one we opened ourselves (not the phone, not a rebuild),
         // so SoundWatch should reconnect once if it stays silent (see Settle).
@@ -722,6 +726,7 @@ namespace BlueAux
                     break;
             }
             Set(ref statusText, text, "StatusText");
+            Raise("ShortStatus");
         }
 
         public static string FormatDuration(TimeSpan span)

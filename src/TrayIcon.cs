@@ -113,7 +113,7 @@ namespace BlueAux
                     var current = session;
                     if (current.State == LinkState.Streaming)
                     {
-                        menu.Items.Add(new ToolStripMenuItem("No sound? Fix " + current.DisplayName, null, (s, e) => current.FixCommand.Execute(null)));
+                        menu.Items.Add(new ToolStripMenuItem("Fix sound", null, (s, e) => current.FixCommand.Execute(null)));
                         menu.Items.Add(new ToolStripMenuItem("Disconnect " + current.DisplayName, null, (s, e) => current.DisconnectCommand.Execute(null)));
                     }
                     else if (current.State == LinkState.Connecting)

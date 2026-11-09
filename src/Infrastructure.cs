@@ -24,7 +24,7 @@ namespace BlueAux
         public const string Tagline = "Use your PC as a Bluetooth speaker for your phone";
         // Used for the settings folder, the start-up entry and the single-instance lock.
         public const string Id = "BlueAux";
-        public const string Version = "1.1";
+        public const string Version = "1.2";
         public const string RepoUrl = "https://github.com/HobaOwO/BlueAux";
         // Earlier Ids, so settings and the start-up entry carry over after a rename.
         public static readonly string[] OldIds = { "PhoneSpeaker" };

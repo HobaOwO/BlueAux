@@ -24,10 +24,11 @@ Windows can play your phone's audio, but there's no easy way to use that. Other 
 BlueAux fixes both:
 
 - 🔁 **Connects automatically** when your phone is in range, and reconnects when you come back.
-- 🔊 **Fixes "connected but no sound".** When your phone comes back, the first connection Windows makes often has no sound. BlueAux reconnects once by itself, so the music plays when you press play.
+- 🔊 **Fixes "connected but no sound".** When your phone comes back, the first connection Windows makes often has no sound. BlueAux reconnects once by itself. With an iPhone it also notices when you press play and nothing comes through, and fixes it within seconds. For apps like TikTok, just press a volume button on your iPhone.
+- 🎵 **Shows what's playing** on your iPhone.
 - 🪶 **Light.** One small file, nothing to install, and only 10–20 MB of memory in the tray.
 - 😴 **Rests when you're away.** It stops searching when nobody's using the PC, and starts again when you're back.
-- 🌗 **Looks at home on Windows 11**, in light and dark mode.
+- 🌗 **Looks at home on Windows 11.** Compact, built on Fluent 2 (Windows 11's own design system), in light and dark mode.
 
 ## Get started
 
@@ -43,7 +44,10 @@ That's it. Play something on your phone and it comes out of your PC.
 ## Questions
 
 **It says connected, but there's no sound.**
-BlueAux usually fixes this by itself: a few seconds after connecting, it reconnects once if no sound has come through yet. If it still happens, first check that your PC isn't muted (the app warns you when it is). Then press play on your phone and click **No sound? Press play on your phone, then click here**, or click the "connected" notification. If you see this often, please [report it](https://github.com/HobaOwO/BlueAux/issues) and attach your logs (see below).
+BlueAux usually fixes this by itself: a few seconds after connecting, it reconnects once if no sound has come through yet. With an iPhone it also sees when you press play, so if nothing comes through it reconnects and presses play again for you. Some apps, such as TikTok and Instagram, don't tell it they're playing. If one of them is silent, press a volume button on your iPhone: BlueAux takes that as "I'm listening and hear nothing" and reconnects (tap the video again if it paused). If it still happens, first check that your PC isn't muted (the app warns you when it is). Then press play on your phone and click **Fix sound**, or click the "connected" notification. If you see this often, please [report it](https://github.com/HobaOwO/BlueAux/issues) and attach your logs (see below).
+
+**How does it know what my iPhone is playing?**
+iPhones tell paired Bluetooth accessories when they play or pause and what the song is, the same way they tell car stereos and smartwatches. Windows usually sets this up when you pair the iPhone (it may show up twice in Bluetooth settings). BlueAux only reads it; it doesn't save song names. Some apps, such as TikTok, don't share what they play, so no song is shown for them.
 
 **Which speakers does it use?**
 Windows' default output. To switch, click the speaker icon in the taskbar, or open **Settings → More options → Sound settings** in the app.

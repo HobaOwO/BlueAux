@@ -12,6 +12,7 @@ set WM=%WINDIR%\System32\WinMetadata
 set REFS=/r:"%FW%\System.Runtime.dll" /r:"%FW%\System.Runtime.InteropServices.WindowsRuntime.dll" /r:"%FW%\System.Xaml.dll" /r:"%FW%\System.Xml.dll" /r:"%FW%\System.Drawing.dll" /r:"%FW%\System.Windows.Forms.dll"
 set REFS=%REFS% /r:"%WPF%\PresentationCore.dll" /r:"%WPF%\PresentationFramework.dll" /r:"%WPF%\WindowsBase.dll"
 set REFS=%REFS% /r:"%WM%\Windows.Foundation.winmd" /r:"%WM%\Windows.Media.winmd" /r:"%WM%\Windows.Devices.winmd"
+set REFS=%REFS% /r:"%WM%\Windows.Security.winmd" /r:"%WM%\Windows.Storage.winmd"
 set RES=/resource:src\Styles.xaml,BlueAux.Styles.xaml /resource:src\MainView.xaml,BlueAux.MainView.xaml
 set ICON=
 if exist src\app.ico set ICON=/win32icon:src\app.ico

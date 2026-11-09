@@ -24,6 +24,7 @@ namespace BlueAux
         readonly ObservableCollection<DeviceSession> sessions = new ObservableCollection<DeviceSession>();
         readonly ActivityMonitor activity = new ActivityMonitor();
         readonly SoundWatch sound = new SoundWatch();
+        readonly PhoneMedia media;
         DeviceWatcher watcher;
         DeviceSession active;
         bool autoPaused;
@@ -42,6 +43,7 @@ namespace BlueAux
             timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher);
             timer.Interval = TimeSpan.FromSeconds(1);
             timer.Tick += delegate { Tick(); };
+            media = new PhoneMedia(this);
         }
 
         public event Action Changed;
@@ -80,10 +82,15 @@ namespace BlueAux
         // The phone is connected but this PC's volume is muted or at zero.
         public bool PcSilenced { get { return sound.PcSilenced; } }
 
+        // What the playing iPhone says it's doing (play / pause, the song), when it can tell us.
+        public PhoneMedia Media { get { return media; } }
+
         void UpdateIdle(DateTime now)
         {
             // Checks the connected phone's sound (and repairs a silent connection); music counts as use.
-            if (sound.Tick(active, now)) activity.NoteAudio();
+            media.Tick(active, now);
+            bool audible = sound.Tick(active, media, now);
+            if (audible) activity.NoteAudio();
 
             int minutes = Math.Max(1, settings.IdleMinutes);
             bool idle = settings.RestWhenIdle && activity.IdleFor() >= TimeSpan.FromMinutes(minutes);
@@ -112,6 +119,8 @@ namespace BlueAux
             Log.Info("{0} started", AppInfo.Name);
             sound.Init(AppSettings.Folder);
             sound.Changed += NotifyChanged;
+            media.Diag = sound.Note;
+            media.Changed += NotifyChanged;
             StartWatcher();
             CheckRadio();
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
@@ -125,6 +134,7 @@ namespace BlueAux
             activity.Dispose();
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             StopWatcher();
+            media.Shutdown();
             foreach (var session in sessions) session.Shutdown();
         }
 

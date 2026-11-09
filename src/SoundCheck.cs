@@ -12,9 +12,14 @@ namespace BlueAux
     struct SoundLevels
     {
         public bool Found;
+        // Windows' state for the phone's stream: 0 inactive, 1 active, 2 expired.
+        public int StreamState;
         public float Output;
         public float Input;
         public bool InputReadable;
+        // The same for the stream that reads the phone's hidden input (for the log).
+        public bool InputStateKnown;
+        public int InputState;
         public float StreamVolume;
         public bool StreamMuted;
         public float SpeakerVolume;
@@ -105,6 +110,9 @@ namespace BlueAux
                         if (!phone) continue;
 
                         result.Found = true;
+                        int streamState;
+                        session.GetState(out streamState);
+                        result.StreamState = streamState;
                         float peak;
                         ((IAudioMeterInformation)session).GetPeakValue(out peak);
                         result.Output = peak;
@@ -151,12 +159,47 @@ namespace BlueAux
                 ((IAudioMeterInformation)meter).GetPeakValue(out peak);
                 result.Input = peak;
                 result.InputReadable = true;
+                ReadInputState(input, ref result);
             }
             catch { }
             finally
             {
                 Release(meter);
                 Release(input);
+            }
+        }
+
+        static void ReadInputState(IMMDevice input, ref SoundLevels result)
+        {
+            object manager = null;
+            IAudioSessionEnumerator sessions = null;
+            try
+            {
+                Guid iid = IidSessionManager2;
+                input.Activate(ref iid, ClsctxAll, IntPtr.Zero, out manager);
+                ((IAudioSessionManager2)manager).GetSessionEnumerator(out sessions);
+                int count;
+                sessions.GetCount(out count);
+                result.InputStateKnown = true;
+                result.InputState = -1;
+                for (int k = 0; k < count; k++)
+                {
+                    IAudioSessionControl2 session = null;
+                    try
+                    {
+                        sessions.GetSession(k, out session);
+                        int state;
+                        session.GetState(out state);
+                        if (state == 1 || result.InputState < 0) result.InputState = state;
+                    }
+                    finally { Release(session); }
+                }
+            }
+            catch { }
+            finally
+            {
+                Release(sessions);
+                Release(manager);
             }
         }
 
@@ -310,9 +353,15 @@ namespace BlueAux
 
     // Watches the connected phone's sound once a second and repairs connections that are stuck silent:
     //  - The first connection we make to a phone that just came back often carries no sound at all, even
-    //    once you press play, and from here that looks exactly like a paused phone. A second connection
-    //    made right after it works, paused or not. So when we've connected and nothing has come through
-    //    after a few seconds, we reconnect once ("settle").
+    //    once you press play. A second connection fixes it: always when made while the phone plays, sometimes
+    //    when made while nothing plays. So when we've connected and nothing has come through after a few
+    //    seconds, we reconnect once ("settle").
+    //  - An iPhone tells us when it plays (PhoneMedia). Playing, but nothing has reached the speakers
+    //    since this connection started: that's the broken kind, so reconnect right then. If the phone
+    //    paused when its audio went away for a moment, press play on it again.
+    //  - Apps like TikTok and Instagram don't tell us they're playing, but a press of the phone's volume
+    //    buttons does reach us. Pressed while nothing has come through on this connection: you're trying
+    //    to listen and hear nothing, so reconnect then, while it plays.
     //  - Sound arrives from the phone but none reaches the speakers, or Windows never set up the stream
     //    that plays the phone at all: rebuilt too (at most a few times, so it can never loop).
     // Everything is written to sound-check.log for bug reports.
@@ -325,6 +374,11 @@ namespace BlueAux
         static readonly TimeSpan HealGap = TimeSpan.FromSeconds(45);
         static readonly TimeSpan HealWindow = TimeSpan.FromMinutes(10);
         const int MaxHealsPerWindow = 3;
+        // A working connection carries sound within a second of pressing play; this leaves room for
+        // quiet intros without making you wait long.
+        static readonly TimeSpan PlayingSilentFor = TimeSpan.FromSeconds(3);
+        static readonly TimeSpan PlayHealMemory = TimeSpan.FromMinutes(10);
+        static readonly TimeSpan ResumeWindow = TimeSpan.FromSeconds(20);
 
         readonly float[] recentInput = new float[3];
         DeviceSession watched;
@@ -337,7 +391,21 @@ namespace BlueAux
         bool pcSilenced;
         bool settlePending;
         bool flowed;
+        bool playCheckDone;
+        DateTime volumeHandled = DateTime.MinValue;
+        DateTime playingSince = DateTime.MaxValue;
+        PhonePlayback lastPlayback;
+        DeviceSession playHealed;
+        DateTime playHealAt;
+        DeviceSession resumeFor;
+        DateTime resumeFrom;
         DateTime lastSettle = DateTime.MinValue;
+        DateTime lostAt = DateTime.UtcNow;
+        string lastLostLine;
+        static readonly TimeSpan WatchAfterLoss = TimeSpan.FromMinutes(3);
+        // Connecting can change the phone's volume by itself; and sound that's just starting gets a moment.
+        static readonly TimeSpan VolumeSettle = TimeSpan.FromSeconds(5);
+        static readonly TimeSpan VolumeWait = TimeSpan.FromSeconds(2);
         DateTime lastHeal = DateTime.MinValue;
         DateTime healWindowStart = DateTime.MinValue;
         int healsInWindow;
@@ -358,14 +426,26 @@ namespace BlueAux
             diag = new DiagLog(Path.Combine(folder, "sound-check.log"));
         }
 
+        public void Note(string text)
+        {
+            Diag(DateTime.UtcNow, text);
+        }
+
         // Returns true when the phone is audibly playing through the PC.
-        public bool Tick(DeviceSession active, DateTime now)
+        public bool Tick(DeviceSession active, PhoneMedia media, DateTime now)
         {
             if (active == null)
             {
-                if (watched != null) Diag(now, watched.DisplayName + ": not connected any more");
+                if (watched != null)
+                {
+                    Diag(now, watched.DisplayName + ": not connected any more");
+                    lostAt = now;
+                    lastLostLine = null;
+                }
                 watched = null;
                 SetSilenced(false);
+                // For a few minutes after losing the phone, note what Windows does with its stream.
+                if (now - lostAt < WatchAfterLoss) DiagWhileDisconnected(now);
                 return false;
             }
             if (active != watched)
@@ -375,6 +455,9 @@ namespace BlueAux
                 samples = stuckSamples = missingSamples = 0;
                 heardSound = false;
                 flowed = false;
+                playCheckDone = false;
+                playingSince = DateTime.MaxValue;
+                lastPlayback = PhonePlayback.Unknown;
                 settlePending = active.ShouldSettle;
                 Array.Clear(recentInput, 0, recentInput.Length);
                 lastDiag = null;
@@ -395,6 +478,25 @@ namespace BlueAux
             DiagLevels(now, levels);
             SetSilenced(levels.PcSilenced);
 
+            var playback = media != null ? media.PlaybackOf(active) : PhonePlayback.Unknown;
+            if (playback != lastPlayback)
+            {
+                lastPlayback = playback;
+                Diag(now, active.DisplayName + (playback == PhonePlayback.Playing ? ": the phone says it's playing"
+                    : playback == PhonePlayback.Paused ? ": the phone says it's paused" : ": can't see whether the phone is playing"));
+            }
+
+            // Anything at all reaching the speakers means this connection works (a broken one reads 0).
+            // The very first reading can be left over from before, so it doesn't count.
+            if (samples > 1 && levels.Found && levels.Output > Silent)
+            {
+                flowed = true;
+                if (playHealed == active) playHealed = null;
+            }
+            if (resumeFor != null) Resume(now, media, playback);
+            if (CheckPlayingButSilent(now, playback, levels)) return false;
+            if (CheckVolumePressed(now, media, levels)) return false;
+
             if (!levels.Found)
             {
                 // Windows normally sets up the stream within a second or two of connecting, and keeps it
@@ -408,9 +510,7 @@ namespace BlueAux
             missingSamples = 0;
             streamSeen = true;
 
-            // Anything at all coming through means this connection works (a broken one reads 0, or a
-            // constant 0.0005). Otherwise reconnect once, a few seconds in.
-            if (levels.Input > Silent || levels.Output > Silent) flowed = true;
+            // Nothing has come through a few seconds in: reconnect once.
             if (settlePending && (flowed || now - watchStart >= SettleAfter))
             {
                 settlePending = false;
@@ -445,6 +545,100 @@ namespace BlueAux
             return a != b && b != c && a != c;
         }
 
+        // The phone says it's playing, and nothing has reached the speakers since this connection started:
+        // the broken kind of connection. Reconnecting while it plays fixes it.
+        // A connection that has played before is fine, so silence on it means the phone is playing
+        // somewhere else (AirPods, its own speaker): leave that alone. Same if reconnecting didn't help.
+        bool CheckPlayingButSilent(DateTime now, PhonePlayback playback, SoundLevels levels)
+        {
+            if (playCheckDone || flowed || playback != PhonePlayback.Playing)
+            {
+                playingSince = DateTime.MaxValue;
+                return false;
+            }
+            // Muted on this PC: silent on purpose. No stream yet: the missing-stream rule handles that.
+            if (!levels.Found || levels.StreamMuted || levels.StreamVolume < 0.05f) return false;
+            if (playingSince == DateTime.MaxValue) playingSince = now;
+            if (now - playingSince < PlayingSilentFor) return false;
+
+            playCheckDone = true;
+            var session = watched;
+            // Windows only marks the phone's stream active once the phone starts sending to this PC. A
+            // broken connection is active but silent; an idle stream means the phone isn't sending here
+            // at all, so it's playing somewhere else, and reconnecting would only pull the music over.
+            if (levels.StreamState != 1)
+            {
+                Diag(now, session.DisplayName + ": the phone says it's playing, but it isn't sending to this PC; it's probably playing somewhere else (AirPods, its own speaker), so leaving it");
+                return false;
+            }
+            if (playHealed == session && now - playHealAt < PlayHealMemory)
+            {
+                Diag(now, session.DisplayName + ": still no sound after reconnecting while it played; it's probably playing somewhere else (AirPods, its own speaker), so leaving it");
+                return false;
+            }
+            if (!Heal(now, "it's playing but no sound comes through")) return false;
+            playHealed = session;
+            playHealAt = now;
+            return true;
+        }
+
+        // You pressed a volume button on the phone and nothing has reached the speakers since this
+        // connection started: you're listening to something and hearing nothing. That's the broken kind
+        // of connection, whatever app is playing, and reconnecting while it plays fixes it.
+        // Not if Windows' stream for the phone is idle: then the phone is playing somewhere else (AirPods,
+        // its own speaker), and reconnecting would only pull the sound over.
+        bool CheckVolumePressed(DateTime now, PhoneMedia media, SoundLevels levels)
+        {
+            if (media == null || flowed) return false;
+            var pressed = media.VolumeChangedAt(watched);
+            if (pressed <= volumeHandled || pressed < watchStart + VolumeSettle) return false;
+            if (now - pressed < VolumeWait) return false;
+            volumeHandled = pressed;
+            var session = watched;
+            if (!levels.Found || levels.StreamMuted || levels.StreamVolume < 0.05f) return false;
+            if (levels.StreamState != 1)
+            {
+                Diag(now, session.DisplayName + ": volume pressed with no sound, but the phone isn't sending to this PC; it's probably playing somewhere else, so leaving it");
+                return false;
+            }
+            if (now - lastHeal < HealGap)
+            {
+                Diag(now, session.DisplayName + ": volume pressed with no sound, but we reconnected less than " + (int)HealGap.TotalSeconds + " seconds ago, so leaving it");
+                return false;
+            }
+            return Heal(now, "you pressed a volume button but no sound comes through");
+        }
+
+        // We're about to reconnect this phone ourselves.
+        void Drop(DateTime now)
+        {
+            watched = null;
+            lostAt = now;
+            lastLostLine = null;
+        }
+
+        // Reconnecting takes the phone's audio away for a moment, and iPhones pause when that happens.
+        // If it paused since then, press play on it again (once, and only shortly after).
+        void Resume(DateTime now, PhoneMedia media, PhonePlayback playback)
+        {
+            if (now - resumeFrom > ResumeWindow || resumeFor != watched)
+            {
+                if (now - resumeFrom > ResumeWindow) resumeFor = null;
+                return;
+            }
+            if (samples < 2 || playback != PhonePlayback.Paused || media.PlaybackChangedAt < resumeFrom) return;
+            resumeFor = null;
+            if (media.Send(watched, PhoneMedia.PlayCommand))
+                Diag(now, watched.DisplayName + ": the phone paused while we reconnected, so pressing play on it");
+        }
+
+        void NoteReconnect(DateTime now, DeviceSession session)
+        {
+            if (lastPlayback != PhonePlayback.Playing) return;
+            resumeFor = session;
+            resumeFrom = now;
+        }
+
         void Settle(DateTime now)
         {
             var session = watched;
@@ -455,15 +649,16 @@ namespace BlueAux
             }
             lastSettle = now;
             Diag(now, session.DisplayName + ": no sound in the first seconds; reconnecting once so it works when you press play");
-            watched = null;
+            NoteReconnect(now, session);
+            Drop(now);
             session.Settle();
         }
 
-        void Heal(DateTime now, string reason)
+        bool Heal(DateTime now, string reason)
         {
             stuckSamples = 0;
             missingSamples = 0;
-            if (now - lastHeal < HealGap) return;
+            if (now - lastHeal < HealGap) return false;
             if (now - healWindowStart > HealWindow)
             {
                 healWindowStart = now;
@@ -472,15 +667,40 @@ namespace BlueAux
             if (healsInWindow >= MaxHealsPerWindow)
             {
                 Diag(now, "would reconnect (" + reason + ") but already tried " + MaxHealsPerWindow + " times");
-                return;
+                return false;
             }
             healsInWindow++;
             lastHeal = now;
             var session = watched;
             Diag(now, session.DisplayName + ": " + reason + "; reconnecting to fix it");
             Log.Info("{0}: connected but silent ({1}), so reconnecting it", session.DisplayName, reason);
-            watched = null;
+            NoteReconnect(now, session);
+            Drop(now);
             session.FixCommand.Execute(null);
+            return true;
+        }
+
+        void DiagWhileDisconnected(DateTime now)
+        {
+            SoundLevels l;
+            try
+            {
+                l = SoundCheck.Read();
+            }
+            catch
+            {
+                return;
+            }
+            string line = !l.Found ? "no phone stream in Windows" : "stream " + StateName(l.StreamState)
+                + (!l.InputStateKnown ? "" : l.InputState == -1 ? " no in-stream" : " in-stream " + StateName(l.InputState));
+            if (line == lastLostLine) return;
+            lastLostLine = line;
+            Diag(now, "while disconnected: " + line + (l.Found ? string.Format("  [{0:0.0000} / {1:0.0000}]", l.Output, l.Input) : ""));
+        }
+
+        static string StateName(int state)
+        {
+            return state == 1 ? "active" : state == 0 ? "inactive" : "expired";
         }
 
         void SetSilenced(bool value)
@@ -499,11 +719,14 @@ namespace BlueAux
             if (!l.Found) line = "no phone stream in Windows";
             else
             {
-                line = string.Format("out={0} in={1} stream vol={2:0.00}{3} speakers='{4}'{5} vol={6:0.00}{7}",
+                line = string.Format("out={0} in={1} stream {8}{9} vol={2:0.00}{3} speakers='{4}'{5} vol={6:0.00}{7}",
                     Bucket(l.Output), l.InputReadable ? Bucket(l.Input) : "unreadable",
                     l.StreamVolume, l.StreamMuted ? " MUTED" : "",
                     l.Speakers, l.OnDefaultSpeakers ? " (default)" : " (NOT default)",
-                    l.SpeakerVolume, l.SpeakerMuted ? " MUTED" : "");
+                    l.SpeakerVolume, l.SpeakerMuted ? " MUTED" : "",
+                    l.StreamState == 1 ? "active" : l.StreamState == 0 ? "inactive" : "expired",
+                    !l.InputStateKnown ? "" : l.InputState == 1 ? " in-stream active" : l.InputState == 0 ? " in-stream inactive"
+                        : l.InputState == 2 ? " in-stream expired" : " no in-stream");
             }
             if (line == lastDiag && now - lastDiagTime < TimeSpan.FromSeconds(30)) return;
             lastDiag = line;
