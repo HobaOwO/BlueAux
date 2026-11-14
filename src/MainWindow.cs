@@ -9,6 +9,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using System.Windows.Shell;
 
 namespace BlueAux
 {
@@ -23,36 +24,109 @@ namespace BlueAux
 
     public sealed class MainWindow : Window
     {
+        // The title bar is drawn by the app (no icon, no name): this tall, with Windows' own caption buttons at the right.
+        const double CaptionHeight = 32;
+
+        readonly MainViewModel viewModel;
         readonly AppSettings settings;
         readonly Action exitApp;
-        readonly HeroAnimator hero;
+        readonly PropertyChangedEventHandler pageHandler;
+        HeroAnimator hero;
+        FrameworkElement root;
+        ScrollViewer mainScroll, settingsScroll;
+        Button maxButton;
+        bool sized;
 
         public MainWindow(MainViewModel viewModel, AppSettings settings, Action exitApp)
         {
+            this.viewModel = viewModel;
             this.settings = settings;
             this.exitApp = exitApp;
 
             Title = AppInfo.Name;
-            // As tall as what it shows (Settings scrolls past the limit), so the main page stays small.
+            // As tall as what it shows: the window follows the page's height (FitHeight), up to this limit,
+            // and Settings scrolls past it.
             Width = 360;
             SizeToContent = SizeToContent.Height;
             MaxHeight = Math.Min(640, SystemParameters.WorkArea.Height - 40);
             MinWidth = 320;
             MinHeight = 200;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            FontFamily = new FontFamily("Segoe UI");
+            // Segoe UI Variable's text optical size on Windows 11, Segoe UI before that.
+            FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI");
             // Fluent's Body size; Styles.xaml holds the rest of the type ramp.
             FontSize = 14;
             UseLayoutRounding = true;
             SetResourceReference(ForegroundProperty, "TextPrimary");
             SetResourceReference(BackgroundProperty, "WindowBackground");
             Icon = IconFactory.WindowIcon();
+            Topmost = settings.AlwaysOnTop;
 
-            var root = (FrameworkElement)Xaml.Load("MainView.xaml");
-            Content = root;
+            // Our own title bar: the top strip of the content drags the window, the caption buttons are the
+            // view's own (CaptionHook keeps snap layouts working), and the frame stays extended so Mica shows through.
+            WindowChrome.SetWindowChrome(this, new WindowChrome
+            {
+                CaptionHeight = CaptionHeight,
+                GlassFrameThickness = new Thickness(-1),
+                UseAeroCaptionButtons = false,
+                ResizeBorderThickness = SystemParameters.WindowResizeBorderThickness,
+                CornerRadius = new CornerRadius(0)
+            });
+            StateChanged += (s, e) => UpdateMaximizedMargin();
+
             DataContext = viewModel;
-            hero = new HeroAnimator(root, viewModel);
+            ReloadView();
             IsVisibleChanged += (s, e) => hero.SetActive(IsVisible);
+            pageHandler = (s, e) =>
+            {
+                if (e.PropertyName == "IsSettingsOpen") Dispatcher.BeginInvoke(new Action(FitHeight), System.Windows.Threading.DispatcherPriority.Loaded);
+                else if (e.PropertyName == "AlwaysOnTop") Topmost = viewModel.AlwaysOnTop;
+            };
+            viewModel.PropertyChanged += pageHandler;
+            Loaded += (s, e) => Dispatcher.BeginInvoke(new Action(() =>
+            {
+                // From the first layout on, the height is ours: set to the page now, animated later.
+                if (sized) return;
+                sized = true;
+                SizeToContent = SizeToContent.Manual;
+                var viewer = viewModel.IsSettingsOpen ? settingsScroll : mainScroll;
+                double target = ActualHeight;
+                if (viewer != null && viewer.ViewportHeight > 0) target += viewer.ExtentHeight - viewer.ViewportHeight;
+                Height = Math.Max(MinHeight, Math.Min(MaxHeight, Math.Ceiling(target)));
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        public bool AllowClose { get; set; }
+
+        // Builds the view from MainView.xaml. Called again when the styles change (animations on/off):
+        // the view model holds every bit of state, so nothing is lost.
+        public void ReloadView()
+        {
+            if (hero != null) hero.Detach();
+            root = (FrameworkElement)Xaml.Load("MainView.xaml");
+            Content = root;
+            UpdateMaximizedMargin();
+            hero = new HeroAnimator(root, viewModel);
+            hero.SetActive(IsVisible);
+
+            // The title bar's buttons. Maximize is driven by Windows through the hit-test hook below.
+            ((Button)root.FindName("MinButton")).Click += (s, e) => SystemCommands.MinimizeWindow(this);
+            ((Button)root.FindName("CloseButton")).Click += (s, e) => Close();
+            maxButton = (Button)root.FindName("MaxButton");
+            maxButton.Click += (s, e) => ToggleMaximize();
+            UpdateMaximizeGlyph();
+
+            mainScroll = (ScrollViewer)root.FindName("MainScroll");
+            settingsScroll = (ScrollViewer)root.FindName("SettingsScroll");
+            foreach (var viewer in new[] { mainScroll, settingsScroll })
+            {
+                SmoothScroll.Attach(viewer);
+                // Content came or went (a card appeared, a section unfolded): follow it.
+                viewer.ScrollChanged += (s, e) =>
+                {
+                    if (e.ExtentHeightChange != 0 && sized) FitHeight();
+                };
+            }
 
             // The idle-minutes box takes digits only and applies on Enter as well as when you click away.
             var idleBox = (TextBox)root.FindName("IdleBox");
@@ -63,12 +137,109 @@ namespace BlueAux
             };
         }
 
-        public bool AllowClose { get; set; }
+        // Maximized, Windows hangs the resize border off-screen; keep the content inside it.
+        void UpdateMaximizedMargin()
+        {
+            if (root == null) return;
+            root.Margin = WindowState == WindowState.Maximized ? new Thickness(8) : new Thickness(0);
+            UpdateMaximizeGlyph();
+        }
+
+        void ToggleMaximize()
+        {
+            if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+            else SystemCommands.MaximizeWindow(this);
+        }
+
+        void UpdateMaximizeGlyph()
+        {
+            if (maxButton == null) return;
+            bool max = WindowState == WindowState.Maximized;
+            maxButton.Content = max ? "\uE923" : "\uE922";
+            maxButton.ToolTip = max ? "Restore" : "Maximize";
+        }
+
+        // Tells Windows where the maximize button is (HTMAXBUTTON), so Windows 11 shows its snap layouts
+        // flyout over it. Windows then owns the mouse there, so hover, press and click come in as
+        // non-client messages and are handled here.
+        IntPtr CaptionHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_NCHITTEST = 0x84, WM_NCMOUSEMOVE = 0xA0, WM_NCLBUTTONDOWN = 0xA1, WM_NCLBUTTONUP = 0xA2,
+                WM_NCMOUSELEAVE = 0x2A2, WM_MOUSEMOVE = 0x200, HTMAXBUTTON = 9;
+            if (maxButton == null) return IntPtr.Zero;
+            switch (msg)
+            {
+                case WM_NCHITTEST:
+                    if (OverMaxButton(lParam))
+                    {
+                        handled = true;
+                        return (IntPtr)HTMAXBUTTON;
+                    }
+                    break;
+                case WM_NCMOUSEMOVE:
+                    maxButton.Tag = (int)wParam == HTMAXBUTTON ? "hover" : null;
+                    if ((int)wParam == HTMAXBUTTON) Native.TrackNonClientLeave(hwnd);
+                    break;
+                case WM_MOUSEMOVE:
+                case WM_NCMOUSELEAVE:
+                    maxButton.Tag = null;
+                    break;
+                case WM_NCLBUTTONDOWN:
+                    if ((int)wParam == HTMAXBUTTON)
+                    {
+                        maxButton.Tag = "pressed";
+                        handled = true;
+                    }
+                    break;
+                case WM_NCLBUTTONUP:
+                    if ((int)wParam == HTMAXBUTTON)
+                    {
+                        maxButton.Tag = null;
+                        handled = true;
+                        ToggleMaximize();
+                    }
+                    break;
+            }
+            return IntPtr.Zero;
+        }
+
+        bool OverMaxButton(IntPtr lParam)
+        {
+            if (!maxButton.IsVisible) return false;
+            int x = (short)((long)lParam & 0xFFFF), y = (short)(((long)lParam >> 16) & 0xFFFF);
+            Point p = maxButton.PointFromScreen(new Point(x, y));
+            return p.X >= 0 && p.Y >= 0 && p.X < maxButton.ActualWidth && p.Y < maxButton.ActualHeight;
+        }
+
+        // Grows or shrinks the window to the page it shows, up to MaxHeight, sliding rather than jumping,
+        // and keeps it on screen while it grows.
+        void FitHeight()
+        {
+            if (!sized || WindowState != WindowState.Normal) return;
+            var viewer = viewModel.IsSettingsOpen ? settingsScroll : mainScroll;
+            if (viewer == null || viewer.ViewportHeight <= 0) return;
+            double target = ActualHeight + viewer.ExtentHeight - viewer.ViewportHeight;
+            target = Math.Max(MinHeight, Math.Min(MaxHeight, Math.Ceiling(target)));
+            if (Math.Abs(target - ActualHeight) < 1) return;
+
+            var area = SystemParameters.WorkArea;
+            if (Top + target > area.Bottom) Top = Math.Max(area.Top, area.Bottom - target);
+
+            var grow = new DoubleAnimation(ActualHeight, target, Motion.Time(0.25)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+            grow.Completed += (s, e) =>
+            {
+                BeginAnimation(HeightProperty, null);
+                Height = target;
+            };
+            BeginAnimation(HeightProperty, grow);
+        }
 
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
             Theme.ApplyToWindow(this);
+            var source = System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+            if (source != null) source.AddHook(CaptionHook);
         }
 
         protected override void OnClosing(CancelEventArgs e)
@@ -84,141 +255,73 @@ namespace BlueAux
         protected override void OnClosed(EventArgs e)
         {
             base.OnClosed(e);
+            viewModel.PropertyChanged -= pageHandler;
             hero.Detach();
             DataContext = null;
         }
     }
 
-    // The circle in the now-playing card: pulses while waiting for a phone, shows dancing bars while playing.
-    // Animations only run while the window is visible, so the app costs nothing in the tray.
-    sealed class HeroAnimator
+    // Mouse-wheel scrolling that glides to where it's going instead of jumping there. Each notch moves the
+    // target a step further; the offset then chases it a little every frame (an exponential ease), so any
+    // number of notches at any speed join one smooth motion with no restarts. Off with Motion.
+    static class SmoothScroll
     {
-        static readonly double[] BarSeconds = { 0.46, 0.62, 0.38, 0.55, 0.42 };
+        const double NotchPixels = 72;
+        // How quickly the offset closes in on the target: it covers 63 % of the gap in this many seconds.
+        const double Tau = 0.07;
 
-        readonly MainViewModel viewModel;
-        readonly PropertyChangedEventHandler stateHandler;
-        readonly Ellipse ring1, ring2, circle;
-        readonly TextBlock glyph;
-        readonly FrameworkElement bars;
-        readonly Rectangle[] barShapes = new Rectangle[5];
-        bool active;
-        string appliedState;
-
-        public HeroAnimator(FrameworkElement root, MainViewModel viewModel)
+        public static void Attach(ScrollViewer viewer)
         {
-            this.viewModel = viewModel;
-            ring1 = (Ellipse)root.FindName("Ring1");
-            ring2 = (Ellipse)root.FindName("Ring2");
-            circle = (Ellipse)root.FindName("HeroCircle");
-            glyph = (TextBlock)root.FindName("HeroGlyph");
-            bars = (FrameworkElement)root.FindName("Bars");
-            for (int i = 0; i < barShapes.Length; i++) barShapes[i] = (Rectangle)root.FindName("Bar" + i);
-            stateHandler = (s, e) =>
+            double target = 0, position = 0;
+            bool running = false;
+            long lastTicks = 0;
+            TimeSpan lastFrame = TimeSpan.MinValue;
+            EventHandler frame = null;
+            frame = (s, e) =>
             {
-                if (e.PropertyName == "HeroState") Apply();
-            };
-            viewModel.PropertyChanged += stateHandler;
-            Apply();
-        }
-
-        // The view model outlives the window; unhook so the closed window can be freed.
-        public void Detach()
-        {
-            viewModel.PropertyChanged -= stateHandler;
-            SetActive(false);
-        }
-
-        public void SetActive(bool value)
-        {
-            active = value;
-            appliedState = null;
-            Apply();
-        }
-
-        void Apply()
-        {
-            string state = viewModel.HeroState;
-            bool lit = state == "Streaming" || state == "Waiting" || state == "Connecting";
-            circle.SetResourceReference(Shape.FillProperty, lit ? "Accent" : "HeroNeutral");
-            glyph.SetResourceReference(TextBlock.ForegroundProperty, lit ? "OnAccent" : "TextSecondary");
-            bars.Visibility = state == "Streaming" ? Visibility.Visible : Visibility.Collapsed;
-            glyph.Visibility = state == "Streaming" ? Visibility.Collapsed : Visibility.Visible;
-
-            string key = active ? state : "inactive";
-            if (key == appliedState) return;
-            appliedState = key;
-
-            StopRing(ring1);
-            StopRing(ring2);
-            foreach (var bar in barShapes) ((ScaleTransform)bar.RenderTransform).BeginAnimation(ScaleTransform.ScaleYProperty, null);
-            if (!active) return;
-
-            if (state == "Waiting" || state == "Connecting")
-            {
-                double seconds = state == "Connecting" ? 1.3 : 2.4;
-                Pulse(ring1, TimeSpan.Zero, seconds);
-                Pulse(ring2, TimeSpan.FromSeconds(seconds / 2), seconds);
-            }
-            else if (state == "Streaming")
-            {
-                Breathe(ring1);
-                for (int i = 0; i < barShapes.Length; i++)
+                // Rendering fires for every render pass, and each scroll causes one, so step once per
+                // real frame (same RenderingTime = same frame) or the loop runs hot and stutters.
+                var args = e as System.Windows.Media.RenderingEventArgs;
+                if (args != null)
                 {
-                    var bounce = new DoubleAnimation(0.25, 1.0, TimeSpan.FromSeconds(BarSeconds[i]))
-                    {
-                        AutoReverse = true,
-                        RepeatBehavior = RepeatBehavior.Forever,
-                        EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
-                    };
-                    ((ScaleTransform)barShapes[i].RenderTransform).BeginAnimation(ScaleTransform.ScaleYProperty, bounce);
+                    if (args.RenderingTime == lastFrame) return;
+                    lastFrame = args.RenderingTime;
                 }
-            }
-        }
-
-        static void Pulse(Ellipse ring, TimeSpan delay, double seconds)
-        {
-            var scale = (ScaleTransform)ring.RenderTransform;
-            var grow = new DoubleAnimation(1.0, 1.45, TimeSpan.FromSeconds(seconds))
-            {
-                BeginTime = delay,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                double dt = Math.Min(0.05, (now - lastTicks) / (double)System.Diagnostics.Stopwatch.Frequency);
+                lastTicks = now;
+                position += (target - position) * (1 - Math.Exp(-dt / Tau));
+                if (Math.Abs(target - position) < 0.5)
+                {
+                    position = target;
+                    running = false;
+                    System.Windows.Media.CompositionTarget.Rendering -= frame;
+                }
+                viewer.ScrollToVerticalOffset(position);
             };
-            var fade = new DoubleAnimation(0.7, 0.0, TimeSpan.FromSeconds(seconds))
+            viewer.PreviewMouseWheel += (s, e) =>
             {
-                BeginTime = delay,
-                RepeatBehavior = RepeatBehavior.Forever
+                if (!Motion.Enabled || viewer.ScrollableHeight <= 0 || e.Delta == 0) return;
+                e.Handled = true;
+                if (!running)
+                {
+                    // Start from wherever the page is (it may have been dragged or resized meanwhile).
+                    position = viewer.VerticalOffset;
+                    target = position;
+                }
+                target = Math.Max(0, Math.Min(viewer.ScrollableHeight, target - e.Delta / 120.0 * NotchPixels));
+                if (running || Math.Abs(target - position) < 0.5) return;
+                running = true;
+                lastTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                System.Windows.Media.CompositionTarget.Rendering += frame;
             };
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-            ring.BeginAnimation(UIElement.OpacityProperty, fade);
-        }
-
-        static void Breathe(Ellipse ring)
-        {
-            var scale = (ScaleTransform)ring.RenderTransform;
-            var grow = new DoubleAnimation(1.12, 1.28, TimeSpan.FromSeconds(1.6))
+            // The window closing or the view being rebuilt must not leave a frame handler behind.
+            viewer.Unloaded += (s, e) =>
             {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+                if (!running) return;
+                running = false;
+                System.Windows.Media.CompositionTarget.Rendering -= frame;
             };
-            var fade = new DoubleAnimation(0.55, 0.3, TimeSpan.FromSeconds(1.6))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever
-            };
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-            ring.BeginAnimation(UIElement.OpacityProperty, fade);
-        }
-
-        static void StopRing(Ellipse ring)
-        {
-            var scale = (ScaleTransform)ring.RenderTransform;
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-            ring.BeginAnimation(UIElement.OpacityProperty, null);
         }
     }
 }

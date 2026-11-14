@@ -209,7 +209,14 @@ namespace BlueAux
         public const uint EsSystemRequired = 0x00000001;
 
         public const int DwmUseImmersiveDarkMode = 20;
+        // Windows 11 22000+: the title bar's colours, as COLORREF (0x00BBGGRR); DwmColorDefault hands them back to Windows.
+        public const int DwmBorderColor = 34;
+        public const int DwmCaptionColor = 35;
+        public const int DwmTextColor = 36;
+        public const int DwmColorDefault = unchecked((int)0xFFFFFFFF);
+        // Windows 11 22621+
         public const int DwmSystemBackdropType = 38;
+        public const int DwmBackdropNone = 1;
         public const int DwmBackdropMica = 2;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -229,6 +236,25 @@ namespace BlueAux
 
         [DllImport("user32.dll")]
         public static extern bool DestroyIcon(IntPtr handle);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct TrackMouseEventArgs
+        {
+            public uint Size, Flags;
+            public IntPtr Window;
+            public uint HoverTime;
+        }
+
+        [DllImport("user32.dll")]
+        static extern bool TrackMouseEvent(ref TrackMouseEventArgs args);
+
+        // Asks for WM_NCMOUSELEAVE when the pointer leaves the window's non-client area.
+        public static void TrackNonClientLeave(IntPtr hwnd)
+        {
+            var args = new TrackMouseEventArgs { Size = 16, Flags = 0x00000002 | 0x00000010, Window = hwnd };
+            args.Size = (uint)Marshal.SizeOf(typeof(TrackMouseEventArgs));
+            TrackMouseEvent(ref args);
+        }
 
         // Ask Windows to start us again (in the tray) if we crash or hang, but not after updates or reboots.
         public const int RestartNoPatch = 4;

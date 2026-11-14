@@ -10,15 +10,17 @@ namespace BlueAux
     {
         readonly NotifyIcon icon = new NotifyIcon();
         readonly ReceiverEngine engine;
+        readonly AppSettings settings;
         readonly Action showWindow;
         readonly Action exitApp;
         IntPtr iconHandle;
         string iconKey;
         Action balloonAction;
 
-        public TrayIcon(ReceiverEngine engine, Action showWindow, Action exitApp)
+        public TrayIcon(ReceiverEngine engine, AppSettings settings, Action showWindow, Action exitApp)
         {
             this.engine = engine;
+            this.settings = settings;
             this.showWindow = showWindow;
             this.exitApp = exitApp;
 
@@ -70,10 +72,13 @@ namespace BlueAux
             if (text.Length > 63) text = text.Substring(0, 62) + "…";
             if (icon.Text != text) icon.Text = text;
 
+            // The plain-glyph icon follows the taskbar: white on a dark one, black on a light one.
+            bool mono = settings.MonoTrayIcon, lightShell = Theme.WindowsLightShell;
+            if (mono) key += lightShell ? "/mono-light" : "/mono-dark";
             if (key == iconKey) return;
             iconKey = key;
             int size = SystemInformation.SmallIconSize.Width;
-            using (var bitmap = IconFactory.Render(size, dot))
+            using (var bitmap = mono ? IconFactory.RenderMono(size, dot, lightShell) : IconFactory.Render(size, dot))
             {
                 IntPtr handle = bitmap.GetHicon();
                 icon.Icon = Icon.FromHandle(handle);

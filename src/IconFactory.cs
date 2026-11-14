@@ -9,11 +9,13 @@ using SDColor = System.Drawing.Color;
 
 namespace BlueAux
 {
-    // Draws the app icon (a speaker on a blue-violet tile) so we don't need image files.
+    // Draws the app icon (an aux plug with sound waves, on a dark tile) so we don't need image files.
     static class IconFactory
     {
-        const string Glyph = "";
         static readonly int[] IcoSizes = { 16, 20, 24, 32, 40, 48, 64, 256 };
+
+        static readonly SDColor Tile = SDColor.FromArgb(0x1C, 0x1C, 0x1F);
+        static readonly SDColor Blue = SDColor.FromArgb(0x3B, 0x9E, 0xFF);
 
         public static Bitmap Render(int size, SDColor? dot)
         {
@@ -24,40 +26,98 @@ namespace BlueAux
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.Clear(SDColor.Transparent);
 
+                // A flat near-black tile with a faint edge, so it reads on dark and light taskbars alike.
                 float inset = size >= 32 ? size / 16f : 0f;
                 var tile = new RectangleF(inset, inset, size - 2 * inset, size - 2 * inset);
-                using (var path = RoundedRect(tile, tile.Width * 0.26f))
-                using (var fill = new System.Drawing.Drawing2D.LinearGradientBrush(new PointF(0, 0), new PointF(size, size), SDColor.FromArgb(0x2F, 0x86, 0xFF), SDColor.FromArgb(0x8B, 0x5C, 0xF6)))
+                using (var path = RoundedRect(tile, tile.Width * 0.24f))
+                using (var fill = new SolidBrush(Tile))
                     g.FillPath(fill, path);
-
-                var family = GlyphFamily();
-                if (family != null)
+                if (size >= 32)
                 {
-                    using (var glyph = new GraphicsPath())
-                    {
-                        float em = size * (size <= 24 ? 0.68f : 0.58f);
-                        glyph.AddString(Glyph, family, 0, em, PointF.Empty, StringFormat.GenericTypographic);
-                        var bounds = glyph.GetBounds();
-                        using (var move = new System.Drawing.Drawing2D.Matrix())
-                        {
-                            move.Translate(size / 2f - (bounds.X + bounds.Width / 2f), size / 2f - (bounds.Y + bounds.Height / 2f));
-                            glyph.Transform(move);
-                        }
-                        g.FillPath(System.Drawing.Brushes.White, glyph);
-                    }
+                    var inner = tile;
+                    inner.Inflate(-0.5f, -0.5f);
+                    using (var edge = RoundedRect(inner, inner.Width * 0.24f))
+                    using (var pen = new System.Drawing.Pen(SDColor.FromArgb(0x24, 0xFF, 0xFF, 0xFF), 1f))
+                        g.DrawPath(pen, edge);
                 }
 
-                if (dot.HasValue)
-                {
-                    float d = size * 0.5f;
-                    var ring = new RectangleF(size - d, size - d, d, d);
-                    using (var ringBrush = new SolidBrush(SDColor.FromArgb(0x1C, 0x1C, 0x1C)))
-                        g.FillEllipse(ringBrush, ring);
-                    float pad = Math.Max(1.5f, d * 0.17f);
-                    ring.Inflate(-pad, -pad);
-                    using (var dotBrush = new SolidBrush(dot.Value))
-                        g.FillEllipse(dotBrush, ring);
-                }
+                float c = size / 2f;
+                DrawPlug(g, size, c - size * 0.07f, c + size * 0.07f, 0.74f, SDColor.White, Blue, Tile);
+                DrawWaves(g, size, c + size * 0.1f, c - size * 0.1f, Blue);
+                DrawDot(g, size, dot, SDColor.FromArgb(0x1C, 0x1C, 0x1C));
+            }
+            return bitmap;
+        }
+
+        // A 3.5 mm aux plug at 45 degrees: a handle, and a tip with the two rings of a TRS jack.
+        static void DrawPlug(Graphics g, int size, float cx, float cy, float scale, SDColor handle, SDColor tip, SDColor groove)
+        {
+            var state = g.Save();
+            g.TranslateTransform(cx, cy);
+            g.RotateTransform(-45);
+            float length = size * 0.72f * scale;
+            float handleW = length * 0.36f, handleH = length * 0.42f;
+            float neckW = length * 0.22f, neckH = length * 0.07f;
+            float shaftW = length * 0.17f, shaftH = length * 0.51f;
+            float top = -length / 2;
+            using (var tipBrush = new SolidBrush(tip))
+            using (var handleBrush = new SolidBrush(handle))
+            using (var grooveBrush = new SolidBrush(groove))
+            {
+                using (var shaft = RoundedRect(new RectangleF(-shaftW / 2, top, shaftW, shaftH + shaftW / 2), shaftW / 2))
+                    g.FillPath(tipBrush, shaft);
+                float band = Math.Max(1f, length * 0.045f);
+                g.FillRectangle(grooveBrush, -shaftW / 2 - 0.5f, top + shaftH * 0.34f, shaftW + 1, band);
+                g.FillRectangle(grooveBrush, -shaftW / 2 - 0.5f, top + shaftH * 0.62f, shaftW + 1, band);
+                g.FillRectangle(handleBrush, -neckW / 2, top + shaftH, neckW, neckH + 1);
+                using (var body = RoundedRect(new RectangleF(-handleW / 2, top + shaftH + neckH, handleW, handleH), handleW * 0.28f))
+                    g.FillPath(handleBrush, body);
+            }
+            g.Restore(state);
+        }
+
+        // Two arcs off the tip: the sound leaving the plug without a cable.
+        static void DrawWaves(Graphics g, int size, float cx, float cy, SDColor ink)
+        {
+            float width = Math.Max(1.5f, size * 0.07f);
+            using (var pen = new System.Drawing.Pen(ink, width) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                float r1 = size * 0.16f, r2 = size * 0.28f;
+                g.DrawArc(pen, cx - r1, cy - r1, 2 * r1, 2 * r1, -80, 70);
+                g.DrawArc(pen, cx - r2, cy - r2, 2 * r2, 2 * r2, -80, 70);
+            }
+        }
+
+        // The status dot in the bottom-right corner, ringed so it stands out on anything.
+        static void DrawDot(Graphics g, int size, SDColor? dot, SDColor ringColor)
+        {
+            if (!dot.HasValue) return;
+            float d = size * 0.48f;
+            var ring = new RectangleF(size - d, size - d, d, d);
+            using (var ringBrush = new SolidBrush(ringColor))
+                g.FillEllipse(ringBrush, ring);
+            float pad = Math.Max(1.5f, d * 0.17f);
+            ring.Inflate(-pad, -pad);
+            using (var dotBrush = new SolidBrush(dot.Value))
+                g.FillEllipse(dotBrush, ring);
+        }
+
+        // The tray icon as Windows draws its own: just the mark, with no tile behind it.
+        public static Bitmap RenderMono(int size, SDColor? dot, bool darkGlyph)
+        {
+            var bitmap = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.Clear(SDColor.Transparent);
+                // The same mark in one colour, a little larger since there's no tile.
+                var ink = darkGlyph ? SDColor.FromArgb(0x1C, 0x1C, 0x1C) : SDColor.White;
+                var gap = darkGlyph ? SDColor.FromArgb(0xF3, 0xF3, 0xF3) : SDColor.FromArgb(0x1C, 0x1C, 0x1C);
+                float c = size / 2f;
+                DrawPlug(g, size, c - size * 0.09f, c + size * 0.09f, 0.92f, ink, ink, gap);
+                DrawWaves(g, size, c + size * 0.12f, c - size * 0.12f, ink);
+                DrawDot(g, size, dot, darkGlyph ? SDColor.FromArgb(0xF3, 0xF3, 0xF3) : SDColor.FromArgb(0x1C, 0x1C, 0x1C));
             }
             return bitmap;
         }
@@ -154,21 +214,6 @@ namespace BlueAux
         {
             var decoder = new IconBitmapDecoder(new MemoryStream(BuildIco()), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
             return decoder.Frames[0];
-        }
-
-        static System.Drawing.FontFamily GlyphFamily()
-        {
-            foreach (var name in new[] { "Segoe Fluent Icons", "Segoe MDL2 Assets" })
-            {
-                try
-                {
-                    return new System.Drawing.FontFamily(name);
-                }
-                catch (ArgumentException)
-                {
-                }
-            }
-            return null;
         }
 
         static GraphicsPath RoundedRect(RectangleF r, float radius)

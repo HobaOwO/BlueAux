@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 
 namespace BlueAux
 {
@@ -27,11 +28,27 @@ namespace BlueAux
         bool heroActionPrimary = true;
         bool showDeviceList;
         DeviceSession mainDevice;
+        bool showSongSetup;
+        string songSetupText;
+        string songSetupAction;
+        DeviceSession songSetupPhone;
+        SetupStep setupStep;
+        readonly ThemeOption[] themes;
+        readonly AlbumArt art;
+        bool heroSong;
+        AlbumArt.Art heroArt;
 
         public MainViewModel(ReceiverEngine engine, AppSettings settings)
         {
             this.engine = engine;
             this.settings = settings;
+            themes = Theme.All.Select(name => new ThemeOption(name)).ToArray();
+            art = new AlbumArt(System.Windows.Application.Current.Dispatcher);
+            art.Changed += Refresh;
+            Theme.Changed += () =>
+            {
+                foreach (var theme in themes) theme.Refresh();
+            };
             // The main page lists your other devices (the big button already covers the main one);
             // Settings lists all of them, hidden ones too.
             devices = new ListCollectionView(engine.Sessions);
@@ -54,6 +71,18 @@ namespace BlueAux
             });
             DismissStartupCommand = new RelayCommand(AnswerStartupPrompt);
             HeroActionCommand = new RelayCommand(RunHeroAction);
+            SongSetupCommand = new RelayCommand(() =>
+            {
+                if (songSetupPhone != null) engine.SetUpSongs(songSetupPhone);
+            });
+            // "Not now": stops offering it on the main page for this phone. Settings still has it.
+            SongSetupDismissCommand = new RelayCommand(() =>
+            {
+                var phone = songSetupPhone;
+                engine.Setup.Reset();
+                if (phone != null) phone.SkipSongSetup();
+                Refresh();
+            });
             FixAudioCommand = new RelayCommand(() =>
             {
                 if (engine.Active != null) engine.Active.FixCommand.Execute(null);
@@ -93,8 +122,42 @@ namespace BlueAux
         public ICommand DismissStartupCommand { get; private set; }
         public ICommand HeroActionCommand { get; private set; }
         public ICommand FixAudioCommand { get; private set; }
+        public ICommand SongSetupCommand { get; private set; }
+        public ICommand SongSetupDismissCommand { get; private set; }
+
+        public bool ShowSongSetup { get { return showSongSetup; } }
+        public string SongSetupText { get { return songSetupText; } }
+        public string SongSetupAction { get { return songSetupAction; } }
+        public bool ShowSongSetupAction { get { return songSetupAction != null; } }
+        public bool ShowSongSetupDismiss { get { return !engine.Setup.IsBusy; } }
         public ICommand IdleLessCommand { get; private set; }
         public ICommand IdleMoreCommand { get; private set; }
+
+        public ThemeOption[] Themes { get { return themes; } }
+
+        public bool Animations
+        {
+            get { return settings.Animations; }
+            set { settings.Animations = value; settings.Save(); Raise(); Motion.Refresh(); }
+        }
+
+        public bool AlbumArt
+        {
+            get { return settings.AlbumArt; }
+            set { settings.AlbumArt = value; settings.Save(); Raise(); Refresh(); }
+        }
+
+        public bool AlwaysOnTop
+        {
+            get { return settings.AlwaysOnTop; }
+            set { settings.AlwaysOnTop = value; settings.Save(); Raise(); }
+        }
+
+        public bool MonoTrayIcon
+        {
+            get { return settings.MonoTrayIcon; }
+            set { settings.MonoTrayIcon = value; settings.Save(); Raise(); engine.NotifyChanged(); }
+        }
 
         public string AppName { get { return AppInfo.Name; } }
         public string AboutText { get { return AppInfo.Name + " " + AppInfo.Version; } }
@@ -126,6 +189,10 @@ namespace BlueAux
         // The phone a song is playing from (empty when the title already is the phone).
         public string HeroDevice { get { return heroDevice; } }
         public string HeroGlyph { get { return heroGlyph; } }
+        // A song is showing (the title is a song, not a phone), so the card shows art and a record.
+        public bool HeroSong { get { return heroSong; } }
+        public ImageSource HeroArt { get { return heroArt == null ? null : heroArt.Image; } }
+        public ImageSource HeroAmbient { get { return heroArt == null ? null : heroArt.Ambient; } }
         public string HeroActionText { get { return heroAction; } }
         public bool ShowPrimaryAction { get { return heroAction != null && heroActionPrimary; } }
         public bool ShowSecondaryAction { get { return heroAction != null && !heroActionPrimary; } }
@@ -195,6 +262,18 @@ namespace BlueAux
             set { settings.DisconnectWhenIdle = value; settings.Save(); Raise(); }
         }
 
+        public bool DisconnectWhenAsleep
+        {
+            get { return settings.DisconnectWhenAsleep; }
+            set { settings.DisconnectWhenAsleep = value; settings.Save(); Raise(); }
+        }
+
+        public bool DisconnectWhenLocked
+        {
+            get { return settings.DisconnectWhenLocked; }
+            set { settings.DisconnectWhenLocked = value; settings.Save(); Raise(); }
+        }
+
         void SetIdleMinutes(int minutes)
         {
             settings.IdleMinutes = Math.Max(MinIdleMinutes, Math.Min(MaxIdleMinutes, minutes));
@@ -213,6 +292,24 @@ namespace BlueAux
             settings.AskedAboutStartup = true;
             settings.Save();
             Raise("ShowStartupPrompt");
+        }
+
+        // The song display offer under the now-playing card: for an iPhone missing its LE pairing, and
+        // while PhoneSetup works on it (it shows its progress there, wherever it was started from).
+        void RefreshSongSetup(System.Collections.Generic.List<DeviceSession> streaming)
+        {
+            var setup = engine.Setup;
+            bool busy = setup.IsBusy, failed = setup.Step == SetupStep.Failed;
+            if (busy && setupStep != SetupStep.Looking && setup.Step == SetupStep.Looking) IsSettingsOpen = false;
+            setupStep = setup.Step;
+
+            var offer = streaming.FirstOrDefault(s => s.OfferSongSetup);
+            songSetupPhone = busy || failed ? setup.Phone : offer;
+            Set(ref showSongSetup, (busy || failed || offer != null) && songSetupPhone != null, "ShowSongSetup");
+            Set(ref songSetupText, busy || failed ? setup.Message : "Show what's playing", "SongSetupText");
+            Set(ref songSetupAction, busy ? null : failed ? "Try again" : "Set up", "SongSetupAction");
+            Raise("ShowSongSetupAction");
+            Raise("ShowSongSetupDismiss");
         }
 
         void RunHeroAction()
@@ -254,6 +351,8 @@ namespace BlueAux
             // and the phone's name under a song. Longer explanations live in tooltips.
             string state, title = name, subtitle = "", device = "", glyph = "", action = null;
             bool primary = true;
+            bool isSong = false;
+            AlbumArt.Art cover = null;
             if (engine.RadioStatus == RadioStatus.Missing)
             {
                 state = "Off";
@@ -271,7 +370,7 @@ namespace BlueAux
             {
                 state = engine.EnumerationDone ? "Empty" : "Loading";
                 title = !engine.EnumerationDone ? "Looking for phones…" : hiddenCount > 0 ? "All devices are hidden" : "No phone paired yet";
-                if (engine.EnumerationDone && hiddenCount > 0) subtitle = "Unhide one in Settings";
+                if (engine.EnumerationDone) subtitle = hiddenCount > 0 ? "Unhide one in Settings" : "Pair it in Windows, then it shows up here";
                 glyph = "";
                 if (engine.EnumerationDone) action = "Pair a phone";
             }
@@ -287,6 +386,8 @@ namespace BlueAux
                     title = song;
                     subtitle = engine.Media.ArtistOf(streaming[0]) ?? "";
                     device = phones;
+                    isSong = true;
+                    if (settings.AlbumArt) cover = art.Lookup(song, subtitle);
                 }
                 else
                 {
@@ -351,15 +452,63 @@ namespace BlueAux
             Set(ref heroSubtitle, subtitle, "HeroSubtitle");
             Set(ref heroDevice, device, "HeroDevice");
             Set(ref heroGlyph, glyph, "HeroGlyph");
+            Set(ref heroSong, isSong, "HeroSong");
+            if (heroArt != cover)
+            {
+                heroArt = cover;
+                Raise("HeroArt");
+                Raise("HeroAmbient");
+            }
             bool actionChanged = Set(ref heroAction, action, "HeroActionText");
             if (Set(ref heroActionPrimary, primary, "HeroActionPrimary") || actionChanged)
             {
                 Raise("ShowPrimaryAction");
                 Raise("ShowSecondaryAction");
             }
+            RefreshSongSetup(streaming);
             Set(ref showDeviceList, visible.Count > 1, "ShowDeviceList");
             Raise("ShowPcSilenced");
             Raise("ShowStartupPrompt");
+        }
+    }
+
+    // A theme in the Settings swatch row.
+    public sealed class ThemeOption : ObservableObject
+    {
+        readonly string name;
+
+        public ThemeOption(string name)
+        {
+            this.name = name;
+            SelectCommand = new RelayCommand(() => Theme.Select(name));
+            Refresh();
+        }
+
+        public string Name { get { return Theme.DisplayName(name); } }
+        public ICommand SelectCommand { get; private set; }
+        public bool IsSelected { get { return Theme.Current == name; } }
+        public Brush Window { get; private set; }
+        public Brush Card { get; private set; }
+        public Brush Ink { get; private set; }
+
+        public void Refresh()
+        {
+            Color window, card, text;
+            Theme.Preview(name, out window, out card, out text);
+            Window = Frozen(window);
+            Card = Frozen(card);
+            Ink = Frozen(text);
+            Raise("Window");
+            Raise("Card");
+            Raise("Ink");
+            Raise("IsSelected");
+        }
+
+        static Brush Frozen(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
         }
     }
 }

@@ -57,6 +57,7 @@ namespace BlueAux
         // Only exists while it's on screen; closing it to the tray throws it away to save memory.
         MainWindow window;
         TrayIcon tray;
+        ResourceDictionary styles;
         DispatcherTimer trimTimer;
         bool keepingAwake;
         bool exiting;
@@ -94,13 +95,17 @@ namespace BlueAux
             AutoStart.Repair();
             // Windows only does this for apps that have been running at least a minute, so no restart loops.
             Native.RegisterApplicationRestart("--minimized", Native.RestartNoPatch | Native.RestartNoReboot);
-            Resources.MergedDictionaries.Add((ResourceDictionary)Xaml.Load("Styles.xaml"));
-            Theme.Initialize(this);
+            Motion.Initialize(settings);
+            styles = (ResourceDictionary)Xaml.Load("Styles.xaml");
+            Resources.MergedDictionaries.Add(styles);
+            Theme.Initialize(this, settings);
+            Motion.Changed += ReloadUi;
 
             engine = new ReceiverEngine(Dispatcher, settings);
             viewModel = new MainViewModel(engine, settings);
             Log.Written += entry => Dispatcher.BeginInvoke(new Action(() => viewModel.AddLogEntry(entry)));
-            tray = new TrayIcon(engine, ShowMainWindow, ExitApp);
+            tray = new TrayIcon(engine, settings, ShowMainWindow, ExitApp);
+            Theme.Changed += tray.Update;
             trimTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             trimTimer.Tick += (s, args) =>
             {
@@ -160,8 +165,28 @@ namespace BlueAux
             window.Show();
             if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
             window.Activate();
+            // A moment on top brings it in front of everything; then back to the setting.
             window.Topmost = true;
-            window.Topmost = false;
+            window.Topmost = settings.AlwaysOnTop;
+        }
+
+        // Styles.xaml bakes the animation durations in when it loads, so turning animations on or off
+        // loads it again and rebuilds the view (the window is small, and is rebuilt on every reopen anyway).
+        void ReloadUi()
+        {
+            // The switch that changed the setting is part of the view about to go; rebuild once it's done.
+            Dispatcher.BeginInvoke(new Action(ReloadUiNow));
+        }
+
+        void ReloadUiNow()
+        {
+            var fresh = (ResourceDictionary)Xaml.Load("Styles.xaml");
+            var merged = Resources.MergedDictionaries;
+            int index = merged.IndexOf(styles);
+            if (index >= 0) merged[index] = fresh;
+            else merged.Add(fresh);
+            styles = fresh;
+            if (window != null) window.ReloadView();
         }
 
         void OnWindowClosed(object sender, EventArgs e)

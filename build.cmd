@@ -9,7 +9,7 @@ if not exist "%FW%\csc.exe" set FW=%WINDIR%\Microsoft.NET\Framework\v4.0.30319
 set WPF=%FW%\WPF
 set WM=%WINDIR%\System32\WinMetadata
 
-set REFS=/r:"%FW%\System.Runtime.dll" /r:"%FW%\System.Runtime.InteropServices.WindowsRuntime.dll" /r:"%FW%\System.Xaml.dll" /r:"%FW%\System.Xml.dll" /r:"%FW%\System.Drawing.dll" /r:"%FW%\System.Windows.Forms.dll"
+set REFS=/r:"%FW%\System.Runtime.dll" /r:"%FW%\System.Runtime.InteropServices.WindowsRuntime.dll" /r:"%FW%\System.Xaml.dll" /r:"%FW%\System.Xml.dll" /r:"%FW%\System.Drawing.dll" /r:"%FW%\System.Windows.Forms.dll" /r:"%FW%\System.Web.Extensions.dll"
 set REFS=%REFS% /r:"%WPF%\PresentationCore.dll" /r:"%WPF%\PresentationFramework.dll" /r:"%WPF%\WindowsBase.dll"
 set REFS=%REFS% /r:"%WM%\Windows.Foundation.winmd" /r:"%WM%\Windows.Media.winmd" /r:"%WM%\Windows.Devices.winmd"
 set REFS=%REFS% /r:"%WM%\Windows.Security.winmd" /r:"%WM%\Windows.Storage.winmd"
