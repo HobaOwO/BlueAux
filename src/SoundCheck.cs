@@ -14,6 +14,8 @@ namespace BlueAux
         public bool Found;
         // Windows' state for the phone's stream: 0 inactive, 1 active, 2 expired.
         public int StreamState;
+        // Windows' ID for the stream (SetStreamMute finds it again by this).
+        public string StreamId;
         public float Output;
         public float Input;
         public bool InputReadable;
@@ -26,6 +28,8 @@ namespace BlueAux
         public bool SpeakerMuted;
         public bool OnDefaultSpeakers;
         public string Speakers;
+        // Windows' name for the stream that was read, e.g. "Microphone (OwO A2DP SNK)".
+        public string StreamName;
 
         // The phone is coming through but the PC's own volume makes it silent.
         public bool PcSilenced
@@ -42,9 +46,14 @@ namespace BlueAux
         static readonly Guid IidEndpointVolume = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");
         static IMMDeviceEnumerator enumerator;
 
-        public static SoundLevels Read()
+        // Windows keeps a stream for every phone that has connected, plus leftovers from old pairings, so
+        // with more than one phone the first stream found is often not the connected phone's: read that
+        // phone's own one. phone: its device container; phoneName: its Bluetooth name (which Windows puts
+        // in the stream's name), in case a driver files the stream elsewhere. Either may be unknown.
+        public static SoundLevels Read(Guid phone, string phoneName)
         {
             var result = new SoundLevels();
+            int best = 0;
             if (enumerator == null) enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
 
             string defaultId = null;
@@ -63,7 +72,7 @@ namespace BlueAux
                 enumerator.EnumAudioEndpoints(Render, ActiveOnly, out devices);
                 int count;
                 devices.GetCount(out count);
-                for (int i = 0; i < count && !result.Found; i++)
+                for (int i = 0; i < count; i++)
                 {
                     IMMDevice device = null;
                     try
@@ -71,8 +80,10 @@ namespace BlueAux
                         devices.Item(i, out device);
                         string id;
                         device.GetId(out id);
-                        if (ReadPhoneStream(device, ref result))
+                        int score = ReadPhoneStream(device, phone, phoneName, best, ref result);
+                        if (score > best)
                         {
+                            best = score;
                             result.OnDefaultSpeakers = id == defaultId;
                             result.Speakers = FriendlyName(device);
                             ReadSpeakerVolume(device, ref result);
@@ -85,7 +96,117 @@ namespace BlueAux
             return result;
         }
 
-        static bool ReadPhoneStream(IMMDevice device, ref SoundLevels result)
+        // Asks Windows' Bluetooth audio driver itself to drop the phone's audio link, the way the Sound
+        // control panel's Disconnect button does (KSPROPSETID_BtAudio / KSPROPERTY_ONESHOT_DISCONNECT, sent
+        // to the driver's filter behind the phone's hidden input device). Closing our receiver doesn't
+        // always make Windows let go of the phone's old stream; this does, within a second, and needs no
+        // admin rights. Returns false when the phone's stream or its driver can't be found.
+        public static bool DropLink(Guid phone, string phoneName)
+        {
+            SoundLevels levels = Read(phone, phoneName);
+            string inputId = InputIdOf(levels.StreamId);
+            if (inputId == null) return false;
+            IMMDevice input = null, filter = null;
+            object topology = null, control = null;
+            IConnector connector = null;
+            try
+            {
+                enumerator.GetDevice(inputId, out input);
+                Guid iid = IidTopology;
+                input.Activate(ref iid, ClsctxAll, IntPtr.Zero, out topology);
+                int count;
+                ((IDeviceTopology)topology).GetConnectorCount(out count);
+                if (count == 0) return false;
+                ((IDeviceTopology)topology).GetConnector(0, out connector);
+                string filterId;
+                connector.GetDeviceIdConnectedTo(out filterId);
+                enumerator.GetDevice(filterId, out filter);
+                iid = IidKsControl;
+                filter.Activate(ref iid, ClsctxAll, IntPtr.Zero, out control);
+                var property = new KsProperty { Set = BtAudioProperties, Id = OneshotDisconnect, Flags = KsPropertyGet };
+                uint returned;
+                int hr = ((IKsControl)control).KsProperty(ref property, (uint)Marshal.SizeOf(typeof(KsProperty)), IntPtr.Zero, 0, out returned);
+                return hr >= 0;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                Release(control);
+                Release(filter);
+                Release(connector);
+                Release(topology);
+                Release(input);
+            }
+        }
+
+        static readonly Guid IidTopology = new Guid("2A07407E-6497-4A18-9787-32F79BD0D98F");
+        static readonly Guid IidKsControl = new Guid("28F54685-06FD-11D2-B27A-00A0C9223196");
+        static readonly Guid BtAudioProperties = new Guid("7FA06C40-B8F6-4C7E-8556-E8C33A12E54D");
+        const uint OneshotDisconnect = 1, KsPropertyGet = 1;
+
+        // Mutes or unmutes the phone's stream (its entry in the Volume Mixer). A stale stream that even a
+        // reconnect didn't clear is reported to come alive after a mute and unmute. Returns false when the
+        // stream isn't there.
+        public static bool SetStreamMute(string streamId, bool mute)
+        {
+            if (string.IsNullOrEmpty(streamId)) return false;
+            if (enumerator == null) enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+            bool done = false;
+            IMMDeviceCollection devices = null;
+            try
+            {
+                enumerator.EnumAudioEndpoints(Render, ActiveOnly, out devices);
+                int count;
+                devices.GetCount(out count);
+                for (int i = 0; i < count && !done; i++)
+                {
+                    IMMDevice device = null;
+                    object manager = null;
+                    IAudioSessionEnumerator sessions = null;
+                    try
+                    {
+                        devices.Item(i, out device);
+                        Guid iid = IidSessionManager2;
+                        device.Activate(ref iid, ClsctxAll, IntPtr.Zero, out manager);
+                        ((IAudioSessionManager2)manager).GetSessionEnumerator(out sessions);
+                        int n;
+                        sessions.GetCount(out n);
+                        for (int k = 0; k < n && !done; k++)
+                        {
+                            IAudioSessionControl2 session = null;
+                            try
+                            {
+                                sessions.GetSession(k, out session);
+                                string sid;
+                                session.GetSessionIdentifier(out sid);
+                                if (sid != streamId) continue;
+                                Guid context = Guid.Empty;
+                                ((ISimpleAudioVolume)session).SetMute(mute, ref context);
+                                done = true;
+                            }
+                            finally { Release(session); }
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        Release(sessions);
+                        Release(manager);
+                        Release(device);
+                    }
+                }
+            }
+            catch { }
+            finally { Release(devices); }
+            return done;
+        }
+
+        // Reads the phone stream on these speakers that best fits the phone into result, if it fits better
+        // than `best`, and returns how well it fits (or `best`).
+        static int ReadPhoneStream(IMMDevice device, Guid phone, string phoneName, int best, ref SoundLevels result)
         {
             object manager = null;
             IAudioSessionEnumerator sessions = null;
@@ -105,26 +226,33 @@ namespace BlueAux
                         string name, sid;
                         session.GetDisplayName(out name);
                         session.GetSessionIdentifier(out sid);
-                        bool phone = (name != null && name.IndexOf("A2DP", StringComparison.OrdinalIgnoreCase) >= 0)
+                        bool isPhone = (name != null && name.IndexOf("A2DP", StringComparison.OrdinalIgnoreCase) >= 0)
                             || (sid != null && sid.IndexOf("svchost.exe%b{", StringComparison.OrdinalIgnoreCase) >= 0);
-                        if (!phone) continue;
+                        if (!isPhone) continue;
 
-                        result.Found = true;
                         int streamState;
                         session.GetState(out streamState);
-                        result.StreamState = streamState;
+                        int score = Fit(sid, name, phone, phoneName, streamState);
+                        if (score <= best) continue;
+                        best = score;
+
+                        var found = new SoundLevels();
+                        found.Found = true;
+                        found.StreamName = name;
+                        found.StreamId = sid;
+                        found.StreamState = streamState;
                         float peak;
                         ((IAudioMeterInformation)session).GetPeakValue(out peak);
-                        result.Output = peak;
+                        found.Output = peak;
                         var volume = (ISimpleAudioVolume)session;
                         float level;
                         bool muted;
                         volume.GetMasterVolume(out level);
                         volume.GetMute(out muted);
-                        result.StreamVolume = level;
-                        result.StreamMuted = muted;
-                        ReadPhoneInput(sid, ref result);
-                        return true;
+                        found.StreamVolume = level;
+                        found.StreamMuted = muted;
+                        ReadPhoneInput(sid, ref found);
+                        result = found;
                     }
                     finally { Release(session); }
                 }
@@ -135,18 +263,95 @@ namespace BlueAux
                 Release(sessions);
                 Release(manager);
             }
+            return best;
+        }
+
+        // How well a stream fits the phone, 0 meaning not at all (+1 if Windows has it active):
+        //  6 in the phone's device container; 4 named after the phone (containers unknown); 2 nothing
+        //  known about the phone yet.
+        // A stream whose input Windows no longer has is left over from an old pairing, and one that's
+        // known to be another phone's (other container, other name) is never read: either would make a
+        // working phone look silent or a silent one look fine.
+        static int Fit(string sid, string streamName, Guid phone, string phoneName, int streamState)
+        {
+            int active = streamState == 1 ? 1 : 0;
+            bool named = NamedAfter(streamName, phoneName);
+            Guid container = Guid.Empty;
+            string inputId = InputIdOf(sid);
+            if (inputId != null)
+            {
+                IMMDevice input = null;
+                try
+                {
+                    enumerator.GetDevice(inputId, out input);
+                    int deviceState;
+                    input.GetState(out deviceState);
+                    // 4 = not present: the phone was removed from this PC (paused or idle phones stay 1).
+                    if (deviceState == 4) return 0;
+                    container = ContainerOf(input);
+                }
+                catch
+                {
+                    return 0;
+                }
+                finally { Release(input); }
+            }
+            // Many phones share a name ("iPhone"), so when both containers are known they decide.
+            if (phone != Guid.Empty && container != Guid.Empty) return container == phone ? 6 + active : 0;
+            if (named) return 4 + active;
+            return string.IsNullOrWhiteSpace(phoneName) ? 2 + active : 0;
+        }
+
+        // Windows names a phone's stream "Microphone (<phone> A2DP SNK)", "Microphone (2- <phone> A2DP SNK)"
+        // after re-pairing, with "Microphone" in the PC's language.
+        static bool NamedAfter(string streamName, string phoneName)
+        {
+            if (string.IsNullOrEmpty(streamName) || string.IsNullOrWhiteSpace(phoneName)) return false;
+            string wanted = phoneName.Trim() + " A2DP";
+            int at = streamName.IndexOf(wanted, StringComparison.OrdinalIgnoreCase);
+            while (at >= 0)
+            {
+                if (at == 0 || streamName[at - 1] == '(' || streamName[at - 1] == ' ') return true;
+                at = streamName.IndexOf(wanted, at + 1, StringComparison.OrdinalIgnoreCase);
+            }
             return false;
         }
 
         // The stream ID ends in "%b{<guid>}": the phone's hidden input device {0.0.1.00000000}.{<guid>}.
+        static string InputIdOf(string sid)
+        {
+            if (sid == null) return null;
+            int start = sid.LastIndexOf("%b{", StringComparison.Ordinal);
+            if (start < 0) return null;
+            int end = sid.IndexOf('}', start);
+            if (end < 0) return null;
+            return "{0.0.1.00000000}." + sid.Substring(start + 2, end - start - 1).ToLowerInvariant();
+        }
+
+        static Guid ContainerOf(IMMDevice device)
+        {
+            IPropertyStore store = null;
+            var value = new PropVariant();
+            try
+            {
+                device.OpenPropertyStore(0, out store);
+                var key = new PropertyKey { Fmtid = new Guid("8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c"), Pid = 2 };
+                store.GetValue(ref key, out value);
+                if (value.Vt == 72 && value.Pointer != IntPtr.Zero) return (Guid)Marshal.PtrToStructure(value.Pointer, typeof(Guid));
+            }
+            catch { }
+            finally
+            {
+                PropVariantClear(ref value);
+                Release(store);
+            }
+            return Guid.Empty;
+        }
+
         static void ReadPhoneInput(string sid, ref SoundLevels result)
         {
-            if (sid == null) return;
-            int start = sid.LastIndexOf("%b{", StringComparison.Ordinal);
-            if (start < 0) return;
-            int end = sid.IndexOf('}', start);
-            if (end < 0) return;
-            string inputId = "{0.0.1.00000000}." + sid.Substring(start + 2, end - start - 1).ToLowerInvariant();
+            string inputId = InputIdOf(sid);
+            if (inputId == null) return;
 
             IMMDevice input = null;
             object meter = null;
@@ -227,23 +432,67 @@ namespace BlueAux
         static string FriendlyName(IMMDevice device)
         {
             IPropertyStore store = null;
+            var value = new PropVariant();
             try
             {
                 device.OpenPropertyStore(0, out store);
                 var key = new PropertyKey { Fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), Pid = 14 };
-                PropVariant value;
                 store.GetValue(ref key, out value);
                 if (value.Vt == 31 && value.Pointer != IntPtr.Zero) return Marshal.PtrToStringUni(value.Pointer);
             }
             catch { }
-            finally { Release(store); }
+            finally
+            {
+                PropVariantClear(ref value);
+                Release(store);
+            }
             return "speakers";
         }
+
+        // Frees what a property read allocated (the name or ID it returned).
+        [DllImport("ole32.dll")]
+        static extern int PropVariantClear(ref PropVariant value);
 
         // Hand COM objects back right away instead of waiting for the garbage collector.
         static void Release(object o)
         {
             if (o != null && Marshal.IsComObject(o)) Marshal.ReleaseComObject(o);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct KsProperty { public Guid Set; public uint Id; public uint Flags; }
+
+        [ComImport, Guid("2A07407E-6497-4A18-9787-32F79BD0D98F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IDeviceTopology
+        {
+            void GetConnectorCount(out int count);
+            void GetConnector(int index, out IConnector connector);
+            void GetSubunitCount(out int count);
+            void GetSubunit(int index, out IntPtr subunit);
+            void GetPartById(int id, out IntPtr part);
+            void GetDeviceId([MarshalAs(UnmanagedType.LPWStr)] out string id);
+            void GetSignalPath(IntPtr from, IntPtr to, bool reject, out IntPtr parts);
+        }
+
+        [ComImport, Guid("9c2c4058-23f5-41de-877a-df3af236a09e"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IConnector
+        {
+            void GetType(out int type);
+            void GetDataFlow(out int flow);
+            void ConnectTo(IConnector other);
+            void Disconnect();
+            void IsConnected(out bool connected);
+            void GetConnectedTo(out IConnector other);
+            void GetConnectorIdConnectedTo([MarshalAs(UnmanagedType.LPWStr)] out string id);
+            void GetDeviceIdConnectedTo([MarshalAs(UnmanagedType.LPWStr)] out string id);
+        }
+
+        [ComImport, Guid("28F54685-06FD-11D2-B27A-00A0C9223196"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IKsControl
+        {
+            [PreserveSig] int KsProperty(ref KsProperty property, uint propertyLength, IntPtr data, uint dataLength, out uint bytesReturned);
+            [PreserveSig] int KsMethod(IntPtr method, uint methodLength, IntPtr data, uint dataLength, out uint bytesReturned);
+            [PreserveSig] int KsEvent(IntPtr evt, uint eventLength, IntPtr data, uint dataLength, out uint bytesReturned);
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -352,10 +601,12 @@ namespace BlueAux
     }
 
     // Watches the connected phone's sound once a second and repairs connections that are stuck silent:
-    //  - The first connection we make to a phone that just came back often carries no sound at all, even
-    //    once you press play. A second connection fixes it: always when made while the phone plays, sometimes
-    //    when made while nothing plays. So when we've connected and nothing has come through after a few
-    //    seconds, we reconnect once ("settle").
+    //  - The first connection to a phone that just came back often carries no sound at all, even once you
+    //    press play. A second connection fixes it. The tell: when the phone dropped the link itself, Windows
+    //    keeps its old audio stream running (active, carrying nothing) while the phone is away, and the next
+    //    link comes up with that stale stream still active. A healthy link opens with the stream inactive,
+    //    and it turns active when music arrives. So a connection that opens onto an active, empty stream is
+    //    reconnected once right away ("settle"); one that opens onto an inactive stream is left alone.
     //  - An iPhone tells us when it plays (PhoneMedia). Playing, but nothing has reached the speakers
     //    since this connection started: that's the broken kind, so reconnect right then. If the phone
     //    paused when its audio went away for a moment, press play on it again.
@@ -367,8 +618,9 @@ namespace BlueAux
     // Everything is written to sound-check.log for bug reports.
     sealed class SoundWatch
     {
-        const float Audible = 0.01f;
-        const float Silent = 0.002f;
+        // A broken connection reads exactly 0. iPhones turn their volume down digitally before sending, so
+        // quiet music at a low volume can read 0.001 or less: anything above this is real sound.
+        const float Silent = 0.0001f;
         static readonly TimeSpan SettleAfter = TimeSpan.FromSeconds(6);
         static readonly TimeSpan SettleGap = TimeSpan.FromMinutes(1);
         static readonly TimeSpan HealGap = TimeSpan.FromSeconds(45);
@@ -387,9 +639,31 @@ namespace BlueAux
         int stuckSamples;
         int missingSamples;
         bool heardSound;
-        bool streamSeen;
+        // Phones whose stream we have seen on this PC (see the missing-stream rule).
+        readonly System.Collections.Generic.HashSet<DeviceSession> streamSeen = new System.Collections.Generic.HashSet<DeviceSession>();
         bool pcSilenced;
         bool settlePending;
+        // We dialed this connection ourselves: the only kind that gets the old blind reconnect when
+        // there's no stream to check.
+        bool dialed;
+        // The phone we lost last, and whether Windows kept its stream active while it was away.
+        DeviceSession lostSession;
+        bool staleWhileAway;
+        // When each phone was last lost, and when the PC last woke: the first connection after a long
+        // absence or a wake is silent in a way the stream doesn't show (it opens inactive and never turns
+        // active), so such a connection keeps the old rule, one blind reconnect after a few silent seconds.
+        readonly System.Collections.Generic.Dictionary<DeviceSession, DateTime> lostTimes = new System.Collections.Generic.Dictionary<DeviceSession, DateTime>();
+        DateTime wokeAt = DateTime.MinValue;
+        static readonly TimeSpan LongAway = TimeSpan.FromMinutes(10);
+        static readonly TimeSpan AfterWake = TimeSpan.FromMinutes(5);
+        bool blindSettle;
+
+        public void NoteWake()
+        {
+            wokeAt = DateTime.UtcNow;
+        }
+        // 0 nothing yet, 1 muted the stream (unmute next tick), 2 done for this connection.
+        int nudgeStage;
         bool flowed;
         bool playCheckDone;
         DateTime volumeHandled = DateTime.MinValue;
@@ -410,6 +684,7 @@ namespace BlueAux
         DateTime healWindowStart = DateTime.MinValue;
         int healsInWindow;
         string lastDiag;
+        string streamName;
         DateTime lastDiagTime;
         DiagLog diag;
 
@@ -439,6 +714,9 @@ namespace BlueAux
                 if (watched != null)
                 {
                     Diag(now, watched.DisplayName + ": not connected any more");
+                    lostSession = watched;
+                    staleWhileAway = false;
+                    lostTimes[watched] = now;
                     lostAt = now;
                     lastLostLine = null;
                 }
@@ -446,6 +724,7 @@ namespace BlueAux
                 SetSilenced(false);
                 // For a few minutes after losing the phone, note what Windows does with its stream.
                 if (now - lostAt < WatchAfterLoss) DiagWhileDisconnected(now);
+                else staleWhileAway = false;
                 return false;
             }
             if (active != watched)
@@ -458,21 +737,37 @@ namespace BlueAux
                 playCheckDone = false;
                 playingSince = DateTime.MaxValue;
                 lastPlayback = PhonePlayback.Unknown;
-                settlePending = active.ShouldSettle;
+                dialed = active.ShouldSettle;
+                settlePending = !active.IsRebuilt;
+                bool stale = staleWhileAway && active == lostSession;
+                staleWhileAway = stale;
+                nudgeStage = 0;
+                DateTime lostTime;
+                bool longAway = !lostTimes.TryGetValue(active, out lostTime) || now - lostTime > LongAway;
+                blindSettle = dialed && (longAway || now - wokeAt < AfterWake);
                 Array.Clear(recentInput, 0, recentInput.Length);
                 lastDiag = null;
-                Diag(now, active.DisplayName + (settlePending ? ": we connected it" : ": connected by the phone or a rebuild") + ", watching the sound");
+                streamName = null;
+                Diag(now, active.DisplayName + (dialed ? ": we connected it" : active.IsRebuilt ? ": connected by a rebuild" : ": connected by the phone")
+                    + ", watching the sound" + (stale ? " (Windows kept its old stream while it was away, so expecting silence)"
+                    : blindSettle ? " (first connection after a long absence or a wake, so reconnecting once unless sound comes)" : ""));
             }
 
             SoundLevels levels;
             try
             {
-                levels = SoundCheck.Read();
+                levels = SoundCheck.Read(active.Container, active.DeviceName);
             }
             catch (Exception ex)
             {
                 Diag(now, "couldn't read sound levels: " + ex.Message);
                 return false;
+            }
+            if (levels.Found && levels.StreamName != streamName)
+            {
+                streamName = levels.StreamName;
+                Diag(now, active.DisplayName + ": reading Windows' stream '" + streamName + "'"
+                    + (active.Container == Guid.Empty ? " (phone's device not known yet)" : ""));
             }
             samples++;
             DiagLevels(now, levels);
@@ -499,30 +794,81 @@ namespace BlueAux
 
             if (!levels.Found)
             {
-                // Windows normally sets up the stream within a second or two of connecting, and keeps it
-                // even while the music is paused. Missing for this long means the connection is broken.
-                // (Only once we've seen that stream on this PC, so an unusual setup can't cause a reconnect loop.)
+                // Windows keeps the phone's stream through pauses, but one that connected while paused can
+                // have none until it plays. So only "playing and still no stream" counts as broken: when the
+                // phone says it's playing, once we've seen this phone's stream on this PC, and not again
+                // after a reconnect for it didn't help (a paused or unknown phone must never cause a loop).
                 missingSamples++;
-                if (streamSeen && missingSamples >= 12 && now - watchStart > TimeSpan.FromSeconds(15))
-                    Heal(now, "Windows isn't playing its sound");
+                // No stream to read the tell from: for a connection we dialed, fall back to the old rule,
+                // one reconnect after a few silent seconds.
+                if (settlePending && dialed && now - watchStart >= SettleAfter)
+                {
+                    settlePending = false;
+                    Settle(now, "no sound in the first seconds and no stream to check");
+                    return false;
+                }
+                if (playback == PhonePlayback.Playing && streamSeen.Contains(active) && missingSamples >= 12
+                    && now - watchStart > TimeSpan.FromSeconds(15) && !(playHealed == active && now - playHealAt < PlayHealMemory)
+                    && Heal(now, "it's playing but Windows isn't playing its sound"))
+                {
+                    playHealed = active;
+                    playHealAt = now;
+                }
                 return false;
             }
             missingSamples = 0;
-            streamSeen = true;
+            streamSeen.Add(active);
 
-            // Nothing has come through a few seconds in: reconnect once.
-            if (settlePending && (flowed || now - watchStart >= SettleAfter))
+            // The tell for the silent kind (see the class comment): the stream is already active, carrying
+            // nothing, as the link opens. The very first reading can be left over from before, so it's
+            // skipped. A stream seen stale while the phone was away is acted on at once; otherwise music
+            // that was already playing gets 3 s to show up.
+            if (settlePending && samples > 1)
             {
-                settlePending = false;
-                if (!flowed)
+                if (flowed) settlePending = false;
+                else if (blindSettle && levels.StreamState != 1)
                 {
-                    Settle(now);
+                    // After a long absence or a wake, an inactive stream proves nothing (seen: a phone back
+                    // after the PC slept all night, stream inactive, play silent on both). Old rule instead.
+                    if (now - watchStart >= SettleAfter)
+                    {
+                        settlePending = false;
+                        Settle(now, "no sound in the first seconds after a long absence or a wake");
+                        return false;
+                    }
+                }
+                else if (levels.StreamState != 1)
+                {
+                    settlePending = false;
+                    Diag(now, active.DisplayName + ": Windows' stream for it is " + StateName(levels.StreamState) + ", so this connection should work");
+                }
+                else if (staleWhileAway || samples >= 4)
+                {
+                    settlePending = false;
+                    Settle(now, staleWhileAway ? "Windows kept its old stream for it" : "Windows' stream for it is active but carries nothing");
                     return false;
                 }
             }
 
-            bool playing = levels.Output > Audible;
-            if (playing && !heardSound)
+            // A reconnected link that still opens onto the active, empty stream: Windows didn't let go of
+            // it, and another reconnect would land on it again. Mute and unmute the stream instead, once per
+            // connection, a second apart. In testing (iPhone 17 paused, Bluetooth off and on) the sound came
+            // within seconds of this every time, where a reconnect alone had stayed silent.
+            if (nudgeStage == 1)
+            {
+                nudgeStage = 2;
+                SoundCheck.SetStreamMute(levels.StreamId, false);
+                Diag(now, active.DisplayName + ": unmuted it again");
+            }
+            else if (nudgeStage == 0 && active.IsRebuilt && !flowed && samples >= 3 && levels.StreamState == 1 && !levels.StreamMuted)
+            {
+                nudgeStage = SoundCheck.SetStreamMute(levels.StreamId, true) ? 1 : 2;
+                Diag(now, active.DisplayName + (nudgeStage == 1 ? ": still on an active, empty stream after the reconnect; muting it for a second"
+                    : ": still on an active, empty stream after the reconnect, and couldn't mute it"));
+            }
+
+            bool sounding = levels.Output > Silent;
+            if (sounding && !heardSound)
             {
                 heardSound = true;
                 Diag(now, watched.DisplayName + ": sound is playing");
@@ -532,7 +878,9 @@ namespace BlueAux
             if (InputIsLive() && levels.Output < Silent && !levels.StreamMuted && levels.StreamVolume > 0.05f) stuckSamples++;
             else stuckSamples = 0;
             if (stuckSamples >= 3) Heal(now, "its sound reaches the PC but doesn't play");
-            return playing;
+            // Music counts as using the PC, so it doesn't rest mid-song: any sound at all, or the phone
+            // saying it plays while it sends here (a quiet passage, the phone's volume near zero).
+            return sounding || (playback == PhonePlayback.Playing && levels.StreamState == 1);
         }
 
         // Real music moves; a meter left over from before a pause sits still. So "live" means loud
@@ -541,7 +889,7 @@ namespace BlueAux
         {
             if (samples < recentInput.Length) return false;
             float a = recentInput[0], b = recentInput[1], c = recentInput[2];
-            if (Math.Max(a, Math.Max(b, c)) < 0.02f) return false;
+            if (Math.Max(a, Math.Max(b, c)) < 0.001f) return false;
             return a != b && b != c && a != c;
         }
 
@@ -639,16 +987,16 @@ namespace BlueAux
             resumeFrom = now;
         }
 
-        void Settle(DateTime now)
+        void Settle(DateTime now, string reason)
         {
             var session = watched;
             if (now - lastSettle < SettleGap)
             {
-                Diag(now, session.DisplayName + ": no sound yet, but reconnected less than a minute ago, so leaving it");
+                Diag(now, session.DisplayName + ": " + reason + ", but reconnected less than a minute ago, so leaving it");
                 return;
             }
             lastSettle = now;
-            Diag(now, session.DisplayName + ": no sound in the first seconds; reconnecting once so it works when you press play");
+            Diag(now, session.DisplayName + ": " + reason + "; reconnecting once so it works when you press play");
             NoteReconnect(now, session);
             Drop(now);
             session.Settle();
@@ -685,12 +1033,15 @@ namespace BlueAux
             SoundLevels l;
             try
             {
-                l = SoundCheck.Read();
+                l = lostSession != null ? SoundCheck.Read(lostSession.Container, lostSession.DeviceName) : SoundCheck.Read(Guid.Empty, null);
             }
             catch
             {
                 return;
             }
+            // Windows keeping the phone's stream active while the phone is away is the tell that its next
+            // connection will be silent (see the class comment).
+            staleWhileAway = l.Found && l.StreamState == 1 && l.Output <= Silent;
             string line = !l.Found ? "no phone stream in Windows" : "stream " + StateName(l.StreamState)
                 + (!l.InputStateKnown ? "" : l.InputState == -1 ? " no in-stream" : " in-stream " + StateName(l.InputState));
             if (line == lastLostLine) return;

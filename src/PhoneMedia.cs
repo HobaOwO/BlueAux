@@ -24,11 +24,11 @@ namespace BlueAux
     // Everything here runs on the UI thread; Windows callbacks are posted back to it.
     public sealed class PhoneMedia
     {
-        static readonly Guid MediaService = new Guid("89D3502B-0F36-433A-8EF4-C502AD55F8DC");
+        internal static readonly Guid MediaService = new Guid("89D3502B-0F36-433A-8EF4-C502AD55F8DC");
         static readonly Guid RemoteCommandId = new Guid("9B3C81D8-57B1-4A8A-B8DF-0E56F7CA51C2");
-        static readonly Guid EntityUpdateId = new Guid("2F7CABCE-808D-411F-9A0C-BB92BA96C102");
+        internal static readonly Guid EntityUpdateId = new Guid("2F7CABCE-808D-411F-9A0C-BB92BA96C102");
         const string ContainerProperty = "System.Devices.Aep.ContainerId";
-        const string AddressProperty = "System.Devices.Aep.DeviceAddress";
+        internal const string AddressProperty = "System.Devices.Aep.DeviceAddress";
         public const byte PlayCommand = 0;
         // Right after BlueAux was closed abruptly, Windows can refuse access for about half a minute.
         static readonly int[] RetrySeconds = { 10, 10, 15, 30, 60, 120, 300 };
@@ -170,16 +170,22 @@ namespace BlueAux
                     nextTry = now.AddSeconds(3);
                     return;
                 }
-                ulong address = await FindLePairing(classicId);
+                var found = await FindLePairing(classicId, target.LeAddress);
                 if (gen != generation) return;
+                ulong address = found.Address;
                 if (address == 0)
                 {
                     noPairingFor = target.DeviceId;
                     noPairingUntil = DateTime.UtcNow.AddMinutes(10);
                     nextTry = noPairingUntil;
-                    Note(target.DisplayName + ": no Bluetooth LE pairing, so it can't tell us when it plays (normal for Android phones)");
+                    // An iPhone can get one with PhoneSetup; an Android phone doesn't have this at all.
+                    target.CanSetUpSongs = found.IsApple;
+                    Note(target.DisplayName + (found.IsApple
+                        ? ": no Bluetooth LE pairing, so it can't tell us when it plays; Set up in the app adds one"
+                        : ": no Bluetooth LE pairing, so it can't tell us when it plays (normal for Android phones)"));
                     return;
                 }
+                target.CanSetUpSongs = false;
                 pairingFor = target.DeviceId;
                 pairingAddress = address;
 
@@ -365,24 +371,71 @@ namespace BlueAux
             }
         }
 
-        // The audio pairing and the LE pairing are separate entries in Windows, in the same container.
-        static async Task<ulong> FindLePairing(string classicId)
+        // Lets a phone that just got its LE pairing (PhoneSetup) be read right away.
+        public void Retry(DeviceSession phone)
         {
+            if (phone == null) return;
+            if (noPairingFor == phone.DeviceId) noPairingFor = null;
+            phone.CanSetUpSongs = false;
+            failures = 0;
+            nextTry = DateTime.UtcNow;
+        }
+
+        sealed class LePairing
+        {
+            public ulong Address;
+            public bool IsApple;
+        }
+
+        // When Windows makes both pairings at once, the audio one and the LE one are separate entries in the
+        // same device container. Otherwise PhoneSetup made the LE one and we remembered its address.
+        static async Task<LePairing> FindLePairing(string classicId, ulong remembered)
+        {
+            var found = new LePairing();
             var props = new[] { ContainerProperty, AddressProperty };
             var classic = await Within(DeviceInformation.CreateFromIdAsync(classicId, props), 15);
             object container;
-            if (classic == null || !classic.Properties.TryGetValue(ContainerProperty, out container) || container == null) return 0;
+            if (classic == null || !classic.Properties.TryGetValue(ContainerProperty, out container) || container == null) return found;
             var paired = await Within(DeviceInformation.FindAllAsync(BluetoothLEDevice.GetDeviceSelectorFromPairingState(true), props), 15);
+            ulong rememberedStillPaired = 0;
             foreach (var info in paired)
             {
                 object other, address;
-                if (!info.Properties.TryGetValue(ContainerProperty, out other) || !Equals(other, container)) continue;
                 if (!info.Properties.TryGetValue(AddressProperty, out address) || address == null) continue;
                 ulong raw;
                 string hex = address.ToString().Replace(":", "").Replace("-", "");
-                if (ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out raw) && raw != 0) return raw;
+                if (!ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out raw) || raw == 0) continue;
+                if (raw == remembered) rememberedStillPaired = raw;
+                if (info.Properties.TryGetValue(ContainerProperty, out other) && Equals(other, container))
+                {
+                    found.Address = raw;
+                    return found;
+                }
             }
-            return 0;
+            found.Address = rememberedStillPaired;
+            if (found.Address == 0) found.IsApple = await IsApple(container);
+            return found;
+        }
+
+        // Apple's Bluetooth company number, which iPhones report about themselves when they pair.
+        const string VendorIdProperty = "{2BD67D8B-8BEB-48D5-87E0-6CDA3428040A} 7";
+        const int AppleVendorId = 0x004C;
+
+        static async Task<bool> IsApple(object container)
+        {
+            try
+            {
+                string aqs = "System.Devices.ContainerId:=\"" + ((Guid)container).ToString("B") + "\"";
+                var nodes = await Within(DeviceInformation.FindAllAsync(aqs, new[] { VendorIdProperty }, DeviceInformationKind.Device), 15);
+                foreach (var node in nodes)
+                {
+                    object vid;
+                    if (node.Properties.TryGetValue(VendorIdProperty, out vid) && vid != null
+                        && Convert.ToInt32(vid, CultureInfo.InvariantCulture) == AppleVendorId) return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         // iOS only shows the media service on an encrypted link, and Windows only encrypts once something
@@ -449,7 +502,7 @@ namespace BlueAux
         }
 
         // Windows calls normally answer, but a phone that walks away mid-call can leave one hanging.
-        static async Task<T> Within<T>(IAsyncOperation<T> operation, int seconds)
+        internal static async Task<T> Within<T>(IAsyncOperation<T> operation, int seconds)
         {
             var task = operation.AsTask();
             if (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(seconds))) != task)

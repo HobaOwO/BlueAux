@@ -35,6 +35,7 @@ namespace BlueAux
         AudioPlaybackConnection openingConnection;
         BluetoothDevice bluetoothDevice;
         string bluetoothName;
+        Guid container;
         bool isTablet;
         bool isOpen;
         bool starting;
@@ -42,6 +43,7 @@ namespace BlueAux
         bool manualAttempt;
         bool paused;
         bool fixing;
+        bool canSetUpSongs;
         bool settling;
         bool openedByRebuild;
         DateTime openedAt = DateTime.MinValue;
@@ -72,6 +74,7 @@ namespace BlueAux
             DisconnectCommand = new RelayCommand(Disconnect);
             FixCommand = new RelayCommand(FixAudio);
             HideCommand = new RelayCommand(ToggleHidden);
+            SetUpSongsCommand = new RelayCommand(() => engine.SetUpSongs(this));
             ExpandCommand = new RelayCommand(() => IsExpanded = !IsExpanded);
             UpdateState();
         }
@@ -80,6 +83,42 @@ namespace BlueAux
         public ICommand DisconnectCommand { get; private set; }
         public ICommand FixCommand { get; private set; }
         public ICommand HideCommand { get; private set; }
+        public ICommand SetUpSongsCommand { get; private set; }
+
+        // The phone's Bluetooth LE address, when PhoneSetup made its LE pairing (0 if it didn't).
+        public ulong LeAddress
+        {
+            get
+            {
+                ulong raw;
+                return ulong.TryParse(settings.LeAddress ?? "", NumberStyles.HexNumber, CultureInfo.InvariantCulture, out raw) ? raw : 0;
+            }
+            set
+            {
+                settings.LeAddress = value == 0 ? null : value.ToString("X12", CultureInfo.InvariantCulture);
+                engine.SaveSettings();
+            }
+        }
+
+        // An iPhone without the LE pairing that song display needs: PhoneMedia finds out, PhoneSetup adds it.
+        public bool CanSetUpSongs
+        {
+            get { return canSetUpSongs; }
+            set
+            {
+                if (Set(ref canSetUpSongs, value, "CanSetUpSongs")) Raise("OfferSongSetup");
+            }
+        }
+
+        // Offered on the main page too, unless you said "Not now" for this phone.
+        public bool OfferSongSetup { get { return canSetUpSongs && !settings.SkipSongSetup; } }
+
+        public void SkipSongSetup()
+        {
+            settings.SkipSongSetup = true;
+            engine.SaveSettings();
+            Raise("OfferSongSetup");
+        }
         public ICommand ExpandCommand { get; private set; }
 
         public string DeviceId { get { return deviceId; } }
@@ -107,9 +146,15 @@ namespace BlueAux
         // Windows' ID for the phone's Bluetooth audio pairing, once we've looked it up.
         public string BluetoothDeviceId { get { return bluetoothDevice != null ? bluetoothDevice.DeviceId : null; } }
 
+        // Empty until looked up. SoundCheck uses it to read this phone's own stream among other phones'.
+        public Guid Container { get { return container; } }
+
         // The current connection is one we opened ourselves (not the phone, not a rebuild),
         // so SoundWatch should reconnect once if it stays silent (see Settle).
         public bool ShouldSettle { get; private set; }
+        // The current connection came from a rebuild (Settle or Fix sound), so SoundWatch mustn't
+        // reconnect it again on the same tell: a loop is worse than one silent connection.
+        public bool IsRebuilt { get; private set; }
         public string HideText { get { return settings.Hidden ? "Unhide" : "Hide"; } }
 
         // One line under the device's name in Settings.
@@ -131,6 +176,12 @@ namespace BlueAux
                 if (!string.IsNullOrWhiteSpace(bluetoothName)) return bluetoothName;
                 return interfaceName;
             }
+        }
+
+        // The phone's own name, which Windows also uses (e.g. "Microphone (OwO A2DP SNK)"), not a nickname.
+        public string DeviceName
+        {
+            get { return string.IsNullOrWhiteSpace(bluetoothName) ? interfaceName : bluetoothName; }
         }
 
         public string EditableName
@@ -264,7 +315,15 @@ namespace BlueAux
         // The PC went idle: let go of the phone without counting it as "disconnected by you".
         public void Rest()
         {
-            Log.Info("{0}: disconnected because the PC is idle", DisplayName);
+            LetGo("the PC is idle");
+        }
+
+        // Let go of the phone for a reason of the PC's (idle, going to sleep, locked), without counting it
+        // as "disconnected by you": it reconnects by itself when the PC is back.
+        public void LetGo(string reason)
+        {
+            if (connection == null && !isOpen) return;
+            Log.Info("{0}: disconnected because {1}", DisplayName, reason);
             CloseConnection();
             UpdateState();
         }
@@ -317,9 +376,9 @@ namespace BlueAux
             Rebuild(false);
         }
 
-        // The first connection we make to a phone that just came back (in range again, Bluetooth back on)
-        // can come up connected but silent, while one made right after it works. SoundWatch calls this
-        // once, a few seconds after such a connection, if no sound has come through yet.
+        // The first connection to a phone that just came back (in range again, Bluetooth back on) can come
+        // up connected but silent, while one made right after it works. SoundWatch calls this once when it
+        // sees the tell for that (see SoundWatch).
         public void Settle()
         {
             Rebuild(true);
@@ -328,13 +387,20 @@ namespace BlueAux
         async void Rebuild(bool settle)
         {
             if (fixing) return;
-            Log.Info(settle ? "{0}: no sound yet, so reconnecting once to make sure it works" : "{0}: rebuilding the audio connection", DisplayName);
+            Log.Info(settle ? "{0}: reconnecting once so the sound works" : "{0}: rebuilding the audio connection", DisplayName);
             fixing = true;
             settling = settle;
             paused = false;
             // Hold off the background restart while we rebuild it ourselves.
             Reset(TimeSpan.FromSeconds(30));
             await Task.Delay(1500);
+            // Closing our receiver doesn't always make Windows let go of the phone's old stream, and a
+            // connection made onto it is silent again. So have the Bluetooth audio driver drop the link too.
+            bool dropped = false;
+            try { dropped = SoundCheck.DropLink(container, DeviceName); }
+            catch { }
+            Log.Info(dropped ? "{0}: asked Windows' Bluetooth audio driver to drop its old link" : "{0}: couldn't reach Windows' Bluetooth audio driver to drop its old link", DisplayName);
+            await WaitForStreamToCloseAsync();
             nextStart = DateTime.UtcNow;
             Connect(true);
             if (!attempting)
@@ -343,6 +409,30 @@ namespace BlueAux
                 settling = false;
                 UpdateState();
             }
+        }
+
+        // Windows tears the phone's old audio stream down only once the link has really closed, and a
+        // connection made onto that stream is silent just like the one before. So after dropping the link,
+        // wait for the stream to go (within a second once the driver was asked) before connecting again.
+        async Task WaitForStreamToCloseAsync()
+        {
+            var start = DateTime.UtcNow;
+            // When the phone itself dropped the link while paused, the stream is a leftover with no link
+            // behind it, and nothing closes it: then SoundWatch's mute and unmute after the reconnect is
+            // what brings the sound, so don't wait long.
+            for (int i = 0; i < 6; i++)
+            {
+                SoundLevels levels;
+                try { levels = SoundCheck.Read(container, DeviceName); }
+                catch { return; }
+                if (!levels.Found || levels.StreamState != 1)
+                {
+                    if (i > 0) Log.Info("{0}: Windows let go of its old stream after {1:0.0} s", DisplayName, (DateTime.UtcNow - start).TotalSeconds);
+                    return;
+                }
+                await Task.Delay(500);
+            }
+            Log.Info("{0}: Windows is still holding its old stream after 3 s; connecting anyway", DisplayName);
         }
 
         void ToggleHidden()
@@ -573,6 +663,7 @@ namespace BlueAux
             bool justOpened = DateTime.UtcNow - openedAt < TimeSpan.FromSeconds(15);
             bool rebuilt = attempting ? fixing : justOpened && openedByRebuild;
             ShouldSettle = (attempting || justOpened) && !rebuilt;
+            IsRebuilt = rebuilt;
             Log.Info("{0}: connected, playing audio", DisplayName);
             UpdateState();
             // A rebuild already said "connected" the first time round.
@@ -651,12 +742,27 @@ namespace BlueAux
                 Raise("Glyph");
                 UpdateState();
                 Log.Info("Found {0}", DisplayName);
+                container = await ContainerOf(device.DeviceId);
             }
             catch (Exception ex)
             {
                 Log.Info("Found {0}", DisplayName);
                 Log.Error(DisplayName + ": couldn't read Bluetooth details", ex);
             }
+        }
+
+        // The phone's Windows device container, which its audio stream in Windows shares.
+        static async Task<Guid> ContainerOf(string deviceId)
+        {
+            const string Key = "System.Devices.Aep.ContainerId";
+            try
+            {
+                var info = await Windows.Devices.Enumeration.DeviceInformation.CreateFromIdAsync(deviceId, new[] { Key });
+                object value;
+                if (info != null && info.Properties.TryGetValue(Key, out value) && value is Guid) return (Guid)value;
+            }
+            catch { }
+            return Guid.Empty;
         }
 
         // The phone came into range / connected to the PC for any reason: try right away.
