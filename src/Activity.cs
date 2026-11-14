@@ -13,6 +13,9 @@ namespace BlueAux
         DateTime lockedAt = DateTime.MinValue;
         volatile bool locked;
 
+        // Raised with true when the PC is locked and false when it's unlocked (on the SystemEvents thread).
+        public event Action<bool> LockChanged;
+
         public ActivityMonitor()
         {
             SystemEvents.SessionSwitch += OnSessionSwitch;
@@ -48,6 +51,9 @@ namespace BlueAux
             {
                 locked = false;
             }
+            else return;
+            var handler = LockChanged;
+            if (handler != null) handler(locked);
         }
 
         static TimeSpan SinceLastInput()

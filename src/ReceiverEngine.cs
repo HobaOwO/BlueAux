@@ -25,6 +25,7 @@ namespace BlueAux
         readonly ActivityMonitor activity = new ActivityMonitor();
         readonly SoundWatch sound = new SoundWatch();
         readonly PhoneMedia media;
+        readonly PhoneSetup setup;
         DeviceWatcher watcher;
         DeviceSession active;
         bool autoPaused;
@@ -44,6 +45,7 @@ namespace BlueAux
             timer.Interval = TimeSpan.FromSeconds(1);
             timer.Tick += delegate { Tick(); };
             media = new PhoneMedia(this);
+            setup = new PhoneSetup(this, media);
         }
 
         public event Action Changed;
@@ -85,6 +87,14 @@ namespace BlueAux
         // What the playing iPhone says it's doing (play / pause, the song), when it can tell us.
         public PhoneMedia Media { get { return media; } }
 
+        // Adds the LE pairing an iPhone needs before it can show what it plays (see PhoneSetup).
+        public PhoneSetup Setup { get { return setup; } }
+
+        public void SetUpSongs(DeviceSession phone)
+        {
+            setup.Start(phone);
+        }
+
         void UpdateIdle(DateTime now)
         {
             // Checks the connected phone's sound (and repairs a silent connection); music counts as use.
@@ -121,10 +131,35 @@ namespace BlueAux
             sound.Changed += NotifyChanged;
             media.Diag = sound.Note;
             media.Changed += NotifyChanged;
+            setup.Diag = sound.Note;
+            setup.Changed += NotifyChanged;
             StartWatcher();
             CheckRadio();
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            activity.LockChanged += OnLockChanged;
             timer.Start();
+        }
+
+        // Locked: nothing should play on a PC nobody is at, so let the phone go (it pauses). Unlocked:
+        // connect again right away.
+        void OnLockChanged(bool locked)
+        {
+            Post(() =>
+            {
+                if (shuttingDown) return;
+                if (locked)
+                {
+                    if (!settings.DisconnectWhenLocked) return;
+                    Log.Info("PC locked: disconnecting");
+                    foreach (var session in sessions) session.LetGo("the PC is locked");
+                }
+                else
+                {
+                    Log.Info("PC unlocked: looking for your phone again");
+                    foreach (var session in sessions) session.WakeUp();
+                }
+                NotifyChanged();
+            });
         }
 
         public void Shutdown()
@@ -133,7 +168,9 @@ namespace BlueAux
             timer.Stop();
             activity.Dispose();
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            activity.LockChanged -= OnLockChanged;
             StopWatcher();
+            setup.Shutdown();
             media.Shutdown();
             foreach (var session in sessions) session.Shutdown();
         }
@@ -269,7 +306,8 @@ namespace BlueAux
             var listener = PickListener();
             foreach (var session in sessions.ToList()) session.Tick(now, session == listener);
 
-            if (RadioOn && !autoPaused && !pcIdle && !sessions.Any(s => s.State == LinkState.Streaming || s.IsAttempting))
+            // A phone that's being rebuilt (Fix sound) is briefly not connected; another phone mustn't take over then.
+            if (RadioOn && !autoPaused && !pcIdle && !sessions.Any(s => s.State == LinkState.Streaming || s.IsAttempting || s.IsFixing))
             {
                 // The phone you used last goes first whenever it's due, like a car stereo.
                 var due = sessions.Where(s => s.WantsAutoAttempt(now)).OrderByDescending(s => s.LastConnected).FirstOrDefault();
@@ -397,10 +435,24 @@ namespace BlueAux
 
         void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
+            if (e.Mode == PowerModes.Suspend)
+            {
+                // Windows gives us a moment before sleeping. Closing the link now, instead of letting it
+                // die, leaves the phone and Windows in a clean state for the connection after waking.
+                if (!settings.DisconnectWhenAsleep) return;
+                Post(() =>
+                {
+                    if (shuttingDown) return;
+                    Log.Info("PC going to sleep: disconnecting");
+                    foreach (var session in sessions) session.LetGo("the PC is going to sleep");
+                });
+                return;
+            }
             if (e.Mode != PowerModes.Resume) return;
             Post(() =>
             {
                 Log.Info("PC woke up; refreshing connections");
+                sound.NoteWake();
                 foreach (var session in sessions) session.Reset(TimeSpan.FromSeconds(4));
             });
         }

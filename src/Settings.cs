@@ -15,6 +15,10 @@ namespace BlueAux
         public bool AutoConnect = true;
         public bool Hidden;
         public DateTime LastConnected;
+        // Set when BlueAux made the phone's Bluetooth LE pairing itself (PhoneSetup), as hex.
+        public string LeAddress;
+        // "Not now" on the song display offer.
+        public bool SkipSongSetup;
 
         // True until we've looked the device up once, so the auto-connect default can follow its type.
         [XmlIgnore]
@@ -37,6 +41,19 @@ namespace BlueAux
         // Off (the default): a phone that's already connected stays connected while resting; only searching
         // stops. Disconnecting a paused iPhone and reconnecting it later is what most often leaves it silent.
         public bool DisconnectWhenIdle;
+        // Let go of the phone when the PC goes to sleep (the link would die anyway) and when it's locked
+        // (so nothing plays on a locked PC); both reconnect by themselves afterwards.
+        public bool DisconnectWhenAsleep = true;
+        public bool DisconnectWhenLocked = true;
+        // Appearance: a Theme.* name ("System" follows Windows), whether the UI animates, and whether the
+        // tray icon is a plain glyph like Windows' own instead of the coloured tile.
+        public string Theme = "System";
+        public bool Animations = true;
+        public bool MonoTrayIcon;
+        // Keep the window above other windows.
+        public bool AlwaysOnTop;
+        // Look the playing song up online (Apple's iTunes catalogue) to show its cover.
+        public bool AlbumArt = true;
         public List<DeviceSettings> Devices = new List<DeviceSettings>();
 
         public static string Folder
