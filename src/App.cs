@@ -21,6 +21,8 @@ namespace BlueAux
                 IconFactory.SaveIco(args[1]);
                 return 0;
             }
+            // Hidden test switches: a CoPlay host or guest with no window and no single-instance lock (CoPlayDebug).
+            if (args.Length >= 1 && args[0].StartsWith("--coplay-")) return CoPlayDebug.Run(args);
 
             bool createdNew;
             using (var mutex = new Mutex(true, MutexName, out createdNew))
