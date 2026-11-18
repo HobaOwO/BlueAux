@@ -309,6 +309,8 @@ namespace BlueAux
             Host = host;
             HostName = hostName;
             udp = CoPlayWire.Open(0);
+            // Counts as answering for the first 4 s, so a guest that just joined doesn't say "no answer".
+            lastPong = HostClock.Now;
             ping = CoPlayWire.WithName(CoPlayWire.Ping, 8, Environment.MachineName);
             new Thread(Receive) { IsBackground = true, Name = "CoPlay guest" }.Start();
             pinger = new Timer(_ => Ping(), null, 0, 500);
@@ -318,7 +320,6 @@ namespace BlueAux
         // Host time minus this PC's time, in 100 ns.
         public long Offset { get { return Interlocked.Read(ref offset); } }
         public long RoundTrip { get { return Interlocked.Read(ref trip); } }
-        public bool HasClock { get { return Interlocked.Read(ref lastPong) != 0; } }
         public long AudioPackets { get { return Interlocked.Read(ref audioPackets); } }
         // The host answered in the last 4 s.
         public bool Answering { get { return HostClock.Now - Interlocked.Read(ref lastPong) < 4 * HostClock.Second; } }
