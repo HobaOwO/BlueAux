@@ -493,7 +493,7 @@ namespace BlueAux
                         player.Add(time, pcm, offset, frames);
                     };
                     var capture = phone ? new PhoneCapture(send) : null;
-                    var tone = phone ? null : new ToneSource(send);
+                    var tone = phone ? null : new ToneSource(send, args.Contains("wobble") ? 1 : args.Contains("wobble-raw") ? 2 : 0);
                     while (true)
                     {
                         Thread.Sleep(2000);

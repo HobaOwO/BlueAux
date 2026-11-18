@@ -100,6 +100,42 @@ namespace BlueAux
         void GetNextPacketSize(out uint frames);
     }
 
+    // Capture stamps wobble by a few ms (arrival times more so), and players take them literally: a wobble
+    // becomes a gap or an overlap, which sounds choppy. So while a chunk lands within 50 ms of where the
+    // last one ended, it's placed exactly there. The stamps' average still counts (the capture's clock
+    // drifts against this PC's): once it's 2 ms away, chunks move over to it in one small step.
+    sealed class Stamps
+    {
+        long expected = long.MinValue;
+        double drift;
+        // For the log: the largest wobble smoothed away, and how often it started over.
+        public long Wobble;
+        public int Restarts;
+
+        public long Place(long time, int frames)
+        {
+            long off = time - expected;
+            if (expected != long.MinValue && Math.Abs(off) < 100 * HostClock.Ms)
+            {
+                Wobble = Math.Max(Wobble, Math.Abs(off));
+                drift += (off - drift) / 64;
+                time = expected;
+                if (Math.Abs(drift) > 2 * HostClock.Ms)
+                {
+                    time += (long)drift;
+                    drift = 0;
+                }
+            }
+            else
+            {
+                if (expected != long.MinValue) Restarts++;
+                drift = 0;
+            }
+            expected = time + frames * HostClock.Second / CoPlayWire.Rate;
+            return time;
+        }
+    }
+
     // Where the host's audio comes from: called with the host time of the first frame, the PCM, where it
     // starts in the array, and how many frames.
     delegate void AudioSink(long time, byte[] pcm, int offset, int frames);
@@ -170,6 +206,7 @@ namespace BlueAux
                 int buffers = 0, silentBuffers = 0, zeroBuffers = 0, badStamps = 0;
                 float loudest = 0;
                 long skew = 0, nextStats = HostClock.Now + 2 * HostClock.Second;
+                var stamps = new Stamps();
                 CoPlayLog.Write("capture: reading the phone's input device");
                 while (!stopped && InputId == id)
                 {
@@ -177,11 +214,11 @@ namespace BlueAux
                     if (HostClock.Now > nextStats)
                     {
                         nextStats = HostClock.Now + 2 * HostClock.Second;
-                        CoPlayLog.Write("capture: {0} buffers ({1} flagged silent, {2} all zero), peak {3:0.00}, {4} bad timestamps, stamps up to {5:0.0} ms old",
-                            buffers, silentBuffers, zeroBuffers, loudest, badStamps, skew / (double)HostClock.Ms);
-                        buffers = silentBuffers = zeroBuffers = badStamps = 0;
+                        CoPlayLog.Write("capture: {0} buffers ({1} flagged silent, {2} all zero), peak {3:0.00}, {4} bad timestamps, stamps up to {5:0.0} ms old, wobble up to {6:0.0} ms, {7} restarts",
+                            buffers, silentBuffers, zeroBuffers, loudest, badStamps, skew / (double)HostClock.Ms, stamps.Wobble / (double)HostClock.Ms, stamps.Restarts);
+                        buffers = silentBuffers = zeroBuffers = badStamps = stamps.Restarts = 0;
                         loudest = 0;
-                        skew = 0;
+                        skew = stamps.Wobble = 0;
                     }
                     uint next;
                     capture.GetNextPacketSize(out next);
@@ -206,6 +243,7 @@ namespace BlueAux
                             badStamps++;
                         }
                         else skew = Math.Max(skew, now - qpc);
+                        time = stamps.Place(time, (int)frames);
                         buffers++;
                         float peak = silent ? 0 : Wasapi.Peak(buffer, 0, (int)frames);
                         if (silent) silentBuffers++;
@@ -266,7 +304,7 @@ namespace BlueAux
         // Render thread only, under the chunks lock.
         double cursor, lastError, lastBeep;
         bool hasCursor;
-        int jumps, corrections;
+        int jumps, corrections, missing;
         float peak;
 
         // toHost: this PC's clock to the host's. quiet: do everything but send silence to the speakers (tests).
@@ -441,7 +479,12 @@ namespace BlueAux
                             wrote = true;
                         }
                     }
-                    if (!wrote) pcm[at] = pcm[at + 1] = pcm[at + 2] = pcm[at + 3] = 0;
+                    if (!wrote)
+                    {
+                        pcm[at] = pcm[at + 1] = pcm[at + 2] = pcm[at + 3] = 0;
+                        // Silence with audio still to come: a lost packet or a gap between chunks.
+                        if (ci < chunks.Count) missing++;
+                    }
                     else Measure(pcm, at, speakerAt + f * FrameTicks);
 
                     double step = FrameTicks;
@@ -474,9 +517,11 @@ namespace BlueAux
         {
             double queued, error;
             float level;
-            int j, c;
+            int j, c, gaps;
             lock (chunks)
             {
+                gaps = missing;
+                missing = 0;
                 queued = chunks.Count > 0 && hasCursor ? Math.Max(0, chunks[chunks.Count - 1].End - cursor) : 0;
                 level = peak;
                 peak = 0;
@@ -484,8 +529,8 @@ namespace BlueAux
                 c = corrections;
                 error = lastError;
             }
-            CoPlayLog.Write("player: level {0:0.00}, queued {1:0} ms, sync error {2:0.00} ms, jumps {3}, corrections {4}",
-                level, queued / HostClock.Ms, error / HostClock.Ms, j, c);
+            CoPlayLog.Write("player: level {0:0.00}, queued {1:0} ms, sync error {2:0.00} ms, jumps {3}, corrections {4}, gaps {5:0.0} ms",
+                level, queued / HostClock.Ms, error / HostClock.Ms, j, c, gaps * 1000.0 / CoPlayWire.Rate);
         }
 
         public void Dispose()
@@ -500,11 +545,15 @@ namespace BlueAux
     {
         const int Chunk = 480;
         readonly AudioSink sink;
+        readonly int wobble;
         volatile bool stopped;
 
-        public ToneSource(AudioSink sink)
+        // wobble (tests): 1 stamps each chunk up to 4 ms off, like a real capture, and smooths it as the
+        // phone capture does; 2 sends the wobbly stamps as they are.
+        public ToneSource(AudioSink sink, int wobble)
         {
             this.sink = sink;
+            this.wobble = wobble;
             new Thread(Run) { IsBackground = true, Name = "CoPlay tone" }.Start();
         }
 
@@ -517,6 +566,8 @@ namespace BlueAux
         {
             var pcm = new byte[Chunk * CoPlayWire.FrameBytes];
             long next = HostClock.Now;
+            var stamps = new Stamps();
+            var random = new Random();
             while (!stopped)
             {
                 // Hand over each 10 ms once it has "happened", like a capture would.
@@ -530,7 +581,8 @@ namespace BlueAux
                         pcm[at] = pcm[at + 2] = (byte)v;
                         pcm[at + 1] = pcm[at + 3] = (byte)(v >> 8);
                     }
-                    sink(next, pcm, 0, Chunk);
+                    long stamp = wobble == 0 ? next : next + random.Next(-40000, 40000);
+                    sink(wobble == 1 ? stamps.Place(stamp, Chunk) : stamp, pcm, 0, Chunk);
                     next += Chunk * HostClock.Second / CoPlayWire.Rate;
                 }
                 Thread.Sleep(5);
