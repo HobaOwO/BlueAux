@@ -116,6 +116,8 @@ namespace BlueAux
         public volatile string InputId;
         // Reading the phone right now (the host only mutes Windows' copy while this is true).
         public volatile bool Running;
+        // Real sound has come through since it started reading this phone.
+        public volatile bool HadAudio;
 
         public PhoneCapture(AudioSink sink)
         {
@@ -164,10 +166,23 @@ namespace BlueAux
                 var capture = (IAudioCaptureClient)service;
                 client.Start();
                 Running = true;
+                HadAudio = false;
+                int buffers = 0, silentBuffers = 0, zeroBuffers = 0, badStamps = 0;
+                float loudest = 0;
+                long skew = 0, nextStats = HostClock.Now + 2 * HostClock.Second;
                 CoPlayLog.Write("capture: reading the phone's input device");
                 while (!stopped && InputId == id)
                 {
                     wake.WaitOne(200);
+                    if (HostClock.Now > nextStats)
+                    {
+                        nextStats = HostClock.Now + 2 * HostClock.Second;
+                        CoPlayLog.Write("capture: {0} buffers ({1} flagged silent, {2} all zero), peak {3:0.00}, {4} bad timestamps, stamps up to {5:0.0} ms old",
+                            buffers, silentBuffers, zeroBuffers, loudest, badStamps, skew / (double)HostClock.Ms);
+                        buffers = silentBuffers = zeroBuffers = badStamps = 0;
+                        loudest = 0;
+                        skew = 0;
+                    }
                     uint next;
                     capture.GetNextPacketSize(out next);
                     while (next > 0)
@@ -182,9 +197,26 @@ namespace BlueAux
                         bool silent = (flags & Silent) != 0;
                         if (!silent) Marshal.Copy(data, buffer, 0, bytes);
                         capture.ReleaseBuffer(frames);
-                        long time = (flags & TimestampError) != 0 ? HostClock.Now - frames * HostClock.Second / CoPlayWire.Rate : qpc;
+                        // WASAPI's stamp should be on HostClock's clock; if it's missing or far off (some
+                        // drivers), use "it just arrived" instead, or every player waits for a time that never comes.
+                        long now = HostClock.Now, time = qpc;
+                        if ((flags & TimestampError) != 0 || Math.Abs(now - qpc) > HostClock.Second)
+                        {
+                            time = now - frames * HostClock.Second / CoPlayWire.Rate;
+                            badStamps++;
+                        }
+                        else skew = Math.Max(skew, now - qpc);
+                        buffers++;
+                        float peak = silent ? 0 : Wasapi.Peak(buffer, 0, (int)frames);
+                        if (silent) silentBuffers++;
+                        else if (peak == 0) zeroBuffers++;
+                        if (peak > loudest) loudest = peak;
                         // Nothing to send while the phone is paused: guests play silence for missing audio anyway.
-                        if (!silent && Wasapi.Peak(buffer, 0, (int)frames) > 0) sink(time, buffer, 0, (int)frames);
+                        if (peak > 0)
+                        {
+                            HadAudio = true;
+                            sink(time, buffer, 0, (int)frames);
+                        }
                         capture.GetNextPacketSize(out next);
                     }
                 }

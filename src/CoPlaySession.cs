@@ -156,11 +156,12 @@ namespace BlueAux
 
             if (Mode == Modes.Hosting)
             {
-                string stream = PhoneStream;
-                capture.InputId = SoundCheck.InputIdOf(stream);
+                string stream = PhoneStream, input = SoundCheck.InputIdOf(stream);
+                if (input != capture.InputId) CoPlayLog.Write(input != null ? "host: found the phone's input device, reading it" : "host: no phone stream to read");
+                capture.InputId = input;
                 if (stream != MutedStream) Unmute();
-                // Only while our own copy plays; otherwise the phone would go silent here.
-                if (stream != null && capture.Running && SoundCheck.SetStreamMute(stream, true) && MutedStream != stream)
+                // Only once our own copy has carried real sound; otherwise the phone would go silent here.
+                if (stream != null && capture.Running && capture.HadAudio && SoundCheck.SetStreamMute(stream, true) && MutedStream != stream)
                 {
                     MutedStream = stream;
                     settings.CoPlayMutedStream = stream;
