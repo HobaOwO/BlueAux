@@ -58,6 +58,10 @@ namespace BlueAux
         // while hosting, so it's unmuted at the next start if the app ended without undoing it.
         public int CoPlayAdjustMs;
         public string CoPlayMutedStream;
+        // CoPlay's card on the main page; off until someone wants it.
+        public bool CoPlay;
+        // Install new releases from GitHub by themselves (Updater).
+        public bool AutoUpdate = true;
         public List<DeviceSettings> Devices = new List<DeviceSettings>();
 
         public static string Folder

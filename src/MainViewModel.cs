@@ -162,6 +162,24 @@ namespace BlueAux
             set { settings.AlbumArt = value; settings.Save(); Raise(); Refresh(); }
         }
 
+        public bool CoPlay
+        {
+            get { return settings.CoPlay; }
+            set
+            {
+                settings.CoPlay = value;
+                settings.Save();
+                if (!value) coPlay.Stop();
+                Raise();
+            }
+        }
+
+        public bool AutoUpdate
+        {
+            get { return settings.AutoUpdate; }
+            set { settings.AutoUpdate = value; settings.Save(); Raise(); }
+        }
+
         public bool AlwaysOnTop
         {
             get { return settings.AlwaysOnTop; }

@@ -30,6 +30,18 @@ namespace BlueAux
             bool createdNew;
             using (var mutex = new Mutex(true, MutexName + (UiTest ? ".Test" : ""), out createdNew))
             {
+                // Just updated: the old copy is still closing; wait for it rather than wake it.
+                if (!createdNew && args.Contains("--updated"))
+                {
+                    try
+                    {
+                        createdNew = mutex.WaitOne(TimeSpan.FromSeconds(20));
+                    }
+                    catch (AbandonedMutexException)
+                    {
+                        createdNew = true;
+                    }
+                }
                 if (!createdNew)
                 {
                     // Already running (probably in the tray): just bring that one up.
@@ -45,7 +57,7 @@ namespace BlueAux
 
                 using (var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName + (UiTest ? ".Test" : "")))
                 {
-                    var app = new App(args.Contains("--minimized"), showEvent);
+                    var app = new App(args.Contains("--minimized"), args.Contains("--updated"), showEvent);
                     return app.Run();
                 }
             }
@@ -55,6 +67,7 @@ namespace BlueAux
     public sealed class App : Application
     {
         readonly bool startHidden;
+        readonly bool justUpdated;
         readonly EventWaitHandle showEvent;
         AppSettings settings;
         ReceiverEngine engine;
@@ -68,9 +81,10 @@ namespace BlueAux
         bool keepingAwake;
         bool exiting;
 
-        public App(bool startHidden, EventWaitHandle showEvent)
+        public App(bool startHidden, bool justUpdated, EventWaitHandle showEvent)
         {
             this.startHidden = startHidden;
+            this.justUpdated = justUpdated;
             this.showEvent = showEvent;
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
         }
@@ -138,6 +152,18 @@ namespace BlueAux
                 willReconnect ? "It will reconnect by itself when it's back in range." : "Press Connect when you want it back.",
                 null);
             if (!Program.UiTest) engine.Start();
+            if (!Program.UiTest)
+            {
+                // Never mid-song, mid-CoPlay, or while someone is using the window.
+                new Updater(settings, Dispatcher,
+                    () => engine.PlayedRecently || coPlay.Mode != CoPlaySession.Modes.Off || (window != null && window.IsActive),
+                    RestartForUpdate);
+            }
+            if (justUpdated)
+            {
+                Log.Info("Updated to {0} {1}", AppInfo.Name, AppInfo.Version);
+                Notify(AppInfo.Name + " updated", "You now have version " + AppInfo.Version + ".", null);
+            }
 
             var listener = new Thread(ListenForShowRequests) { IsBackground = true, Name = "Show listener" };
             listener.Start();
@@ -249,6 +275,13 @@ namespace BlueAux
                 window.Close();
             }
             Shutdown();
+        }
+
+        void RestartForUpdate(string args)
+        {
+            bool visible = window != null && window.IsVisible;
+            System.Diagnostics.Process.Start(System.Reflection.Assembly.GetExecutingAssembly().Location, args + (visible ? "" : " --minimized"));
+            ExitApp();
         }
 
         void Cleanup()

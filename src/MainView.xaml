@@ -361,7 +361,8 @@
         </ContentControl>
 
         <!-- CoPlay: the phone on other BlueAux PCs at the same moment (CoPlaySession) -->
-        <ContentControl Style="{StaticResource Card}" Margin="0,8,0,0" Padding="16,8,8,8">
+        <ContentControl Style="{StaticResource Card}" Margin="0,8,0,0" Padding="16,8,8,8"
+                        Visibility="{Binding CoPlay, Converter={StaticResource BoolToVis}}">
           <StackPanel>
             <Grid MinHeight="40">
               <Grid.ColumnDefinitions>
@@ -448,6 +449,12 @@
             <Border Style="{StaticResource Divider}"/>
             <CheckBox Style="{StaticResource SettingSwitch}" Tag="&#xE718;" Content="Always on top" IsChecked="{Binding AlwaysOnTop}"
                       ToolTip="Keeps this window above other windows"/>
+            <Border Style="{StaticResource Divider}"/>
+            <CheckBox Style="{StaticResource SettingSwitch}" Tag="&#xE7F5;" Content="CoPlay" IsChecked="{Binding CoPlay}"
+                      ToolTip="Shows CoPlay on the main page: play your phone on other BlueAux PCs at the same moment"/>
+            <Border Style="{StaticResource Divider}"/>
+            <CheckBox Style="{StaticResource SettingSwitch}" Tag="&#xE895;" Content="Update automatically" IsChecked="{Binding AutoUpdate}"
+                      ToolTip="Installs new versions from GitHub by itself, when no music is playing"/>
           </StackPanel>
         </ContentControl>
 
