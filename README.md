@@ -22,6 +22,8 @@ Windows can already receive Bluetooth audio, but there's no good way to use it: 
 - 🔁 **Connects by itself** when your phone is in range, and again when you come back.
 - 🔊 **Fixes "connected but no sound".** It can tell a dead connection from a paused phone and repairs it before you notice. On an iPhone it also knows when you press play or a volume button and nothing comes through.
 - 🎵 **Shows what's playing** on your iPhone, with album art and a spinning record.
+- 🔈 **CoPlay:** play your phone on several PCs at once, in sync. Turn it on in Settings.
+- ⬆️ **Updates itself** from GitHub when nothing is playing.
 - 🎨 **Four themes:** Windows, OLED (true black), Graphite and Paper, all in your accent colour. Animations can be turned off.
 - 🔒 **Respects your privacy.** Lets go of the phone when the PC is locked or goes to sleep, and rests when you're away.
 - 🪶 **Light.** One small file and 10–20 MB of memory in the tray.
@@ -41,7 +43,7 @@ Play something on your phone and it comes out of your PC.
 
 | | |
 |---|---|
-| **General** | Start with Windows · notifications · keep running when closed · always on top |
+| **General** | Start with Windows · notifications · keep running when closed · always on top · CoPlay · update automatically |
 | **When you're away** | Rest after N minutes idle (optionally disconnect the phone too) · disconnect when the PC sleeps · disconnect when the PC is locked · keep the PC awake while playing |
 | **Appearance** | Theme: Windows, OLED, Graphite, Paper · animations on/off · album art on/off · plain tray icon |
 | **Connect automatically** | Choose which phones connect by themselves; hide the ones you don't use |
@@ -55,7 +57,13 @@ BlueAux usually fixes this on its own within a few seconds. If it doesn't: check
 iPhones tell paired accessories what they play, the same way they tell car stereos and watches. Windows usually sets that up when you pair the phone; if yours didn't, BlueAux shows **Set up** under the phone: hold the unlocked iPhone next to the PC and tap **Pair** when it asks. If that doesn't work (common with older iPhones such as the 6, and with some PCs), BlueAux then shows the PC in the iPhone's **Settings → Bluetooth**: tap it there and pair. Once. Apps such as TikTok don't share what they play, so no song shows for them.
 
 **Where does the album art come from?**
-An iPhone sends only the title and artist, so BlueAux looks the cover up in Apple's iTunes catalogue (Deezer as a fallback). That's the one thing it sends anywhere; turn **Album art** off in Settings and it sends nothing at all.
+An iPhone sends only the title and artist, so BlueAux looks the cover up in Apple's iTunes catalogue (Deezer as a fallback). Turn **Album art** off in Settings and no song is sent anywhere. The only other thing BlueAux contacts is GitHub, to look for updates (turn **Update automatically** off to stop that; **Check for updates** under **More** still works).
+
+**Can several PCs play my phone at the same time?**
+Yes, with **CoPlay**. Turn on **Settings → CoPlay** on every PC (all on the same Wi-Fi). On the PC your phone is connected to, press **Host**; on the others press **Join**, then the host's name. They all play the same music at the same moment, about 0.3 s after the phone. If one sounds early or late, nudge **Sync this PC** on it. If Windows Firewall asks, allow **Private networks**.
+
+**How do I update?**
+BlueAux installs new versions by itself when nothing is playing. To update right away: **Settings → More → Check for updates**. (From 1.5 or older, download the new version once by hand.)
 
 **Which speakers does it use?**
 Windows' default output. Switch it from the speaker icon in the taskbar, or **Settings → More → Sound settings** in the app.
