@@ -26,6 +26,8 @@ namespace BlueAux
             lastAudio = DateTime.UtcNow;
         }
 
+        public DateTime LastAudio { get { return lastAudio; } }
+
         public TimeSpan IdleFor()
         {
             var now = DateTime.UtcNow;

@@ -69,6 +69,14 @@ namespace BlueAux
             if (IsBusy || target == null) return;
             int gen = ++generation;
             phone = target;
+            await PairFromPc(target, gen);
+            // Many PCs, and iPhones older than the 6s, can't get the LE pairing that way (see PairFromPhone).
+            if (gen == generation && step == SetupStep.Failed) await PairFromPhone(target, gen);
+        }
+
+        // The PC reaches out to the iPhone held next to it and asks it to pair.
+        async Task PairFromPc(DeviceSession target, int gen)
+        {
             Set(SetupStep.Looking, "Hold your unlocked iPhone next to this PC…");
             Note(target.DisplayName + ": setting up song display; looking for the iPhone next to the PC");
             BluetoothLEDevice dev = null;
@@ -180,6 +188,134 @@ namespace BlueAux
                     catch { }
                 }
             }
+        }
+
+        // The other way round: the PC shows up in the iPhone's own Bluetooth settings as a media remote
+        // (Bluetooth LE HID with only play, pause and volume keys, like a selfie remote), and you pair it
+        // from there. Windows only adds the LE pairing next to the audio one by itself when both the PC's
+        // adapter and the iPhone support LE Secure Connections (not on many PCs, nor on an iPhone 6), and
+        // iPhones turn down a pairing the PC starts out of the blue; one the iPhone starts always works.
+        async Task PairFromPhone(DeviceSession target, int gen)
+        {
+            BluetoothAdapter adapter = null;
+            try { adapter = await BluetoothAdapter.GetDefaultAsync(); }
+            catch { }
+            if (adapter == null || !adapter.IsPeripheralRoleSupported)
+            {
+                Note(target.DisplayName + ": this PC's Bluetooth can't act as an LE accessory, so it can't be paired from the iPhone either");
+                return;
+            }
+            GattServiceProvider remote = null;
+            BluetoothLEDevice dev = null;
+            try
+            {
+                var before = await PairedLeAddresses();
+                remote = await CreateMediaRemote();
+                if (gen != generation) return;
+                if (remote == null)
+                {
+                    Note(target.DisplayName + ": couldn't offer this PC as a media remote");
+                    return;
+                }
+                remote.AdvertisementStatusChanged += (p, e) => Note("media remote advertising: " + e.Status + (e.Error != BluetoothError.Success ? " (" + e.Error + ")" : ""));
+                remote.StartAdvertising(new GattServiceProviderAdvertisingParameters { IsConnectable = true, IsDiscoverable = true });
+                string pc = Environment.MachineName;
+                Set(SetupStep.Pairing, "On your iPhone, open Settings > Bluetooth and tap " + pc + ", then Pair (on both)");
+                Note(target.DisplayName + ": offering this PC (" + pc + ") in the iPhone's Bluetooth settings for 2 minutes");
+                for (int i = 0; i < 120; i++)
+                {
+                    await Task.Delay(1000);
+                    if (gen != generation) return;
+                    ulong address = 0;
+                    foreach (ulong a in await PairedLeAddresses())
+                        if (!before.Contains(a)) address = a;
+                    if (gen != generation) return;
+                    if (address == 0) continue;
+                    Note(string.Format("{0}: something paired from its side ({1:X12}); checking it's the iPhone", target.DisplayName, address));
+                    dev = await PhoneMedia.Within(BluetoothLEDevice.FromBluetoothAddressAsync(address), 20);
+                    if (gen != generation) return;
+                    if (dev == null || !await HasMediaService(dev, gen))
+                    {
+                        if (gen != generation) return;
+                        Fail("That wasn't an iPhone. Pair this PC from the iPhone's Bluetooth settings.", "no media service on what paired");
+                        return;
+                    }
+                    if (gen != generation) return;
+                    target.LeAddress = address;
+                    Note(string.Format("{0}: song display set up from the iPhone; its Bluetooth LE address is {1:X12}", target.DisplayName, address));
+                    Log.Info("{0}: set up, it can now show what it plays", target.DisplayName);
+                    Set(SetupStep.Done, null);
+                    media.Retry(target);
+                    return;
+                }
+                Fail("Didn't pair. On the iPhone: Settings > Bluetooth, tap " + pc + ".", "nothing paired from the iPhone in 2 minutes");
+            }
+            catch (Exception ex)
+            {
+                if (gen == generation) Fail("Something went wrong. Try again.", ex.Message);
+            }
+            finally
+            {
+                if (remote != null)
+                {
+                    try { remote.StopAdvertising(); }
+                    catch { }
+                }
+                if (dev != null)
+                {
+                    try { dev.Dispose(); }
+                    catch { }
+                }
+            }
+        }
+
+        static Guid Uuid16(int id)
+        {
+            return new Guid(string.Format("0000{0:X4}-0000-1000-8000-00805F9B34FB", id));
+        }
+
+        // A Bluetooth LE HID service with one consumer-control report (play/pause, next, previous, volume,
+        // mute). It never sends a key; it exists so the iPhone lists the PC and pairs it. Every part asks
+        // for encryption, which is what makes the iPhone pair.
+        static async Task<GattServiceProvider> CreateMediaRemote()
+        {
+            var created = await GattServiceProvider.CreateAsync(Uuid16(0x1812));
+            if (created.Error != BluetoothError.Success) return null;
+            var svc = created.ServiceProvider.Service;
+            byte[] reportMap = { 0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x01, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x06,
+                0x09, 0xCD, 0x09, 0xB5, 0x09, 0xB6, 0x09, 0xE9, 0x09, 0xEA, 0x09, 0xE2, 0x81, 0x02, 0x95, 0x02, 0x81, 0x01, 0xC0 };
+            var read = GattCharacteristicProperties.Read;
+            var write = GattCharacteristicProperties.WriteWithoutResponse;
+            if (!await AddCharacteristic(svc, 0x2A4B, read, reportMap)) return null;                         // report map
+            if (!await AddCharacteristic(svc, 0x2A4A, read, new byte[] { 0x11, 0x01, 0x00, 0x02 })) return null; // HID 1.11, normally connectable
+            if (!await AddCharacteristic(svc, 0x2A4C, write, null)) return null;                               // control point
+            if (!await AddCharacteristic(svc, 0x2A4E, read | write, new byte[] { 1 })) return null;            // protocol mode: report
+            var report = await svc.CreateCharacteristicAsync(Uuid16(0x2A4D), Parameters(read | GattCharacteristicProperties.Notify, new byte[] { 0 }));
+            if (report.Error != BluetoothError.Success) return null;
+            var reference = await report.Characteristic.CreateDescriptorAsync(Uuid16(0x2908), new GattLocalDescriptorParameters
+            {
+                ReadProtectionLevel = GattProtectionLevel.EncryptionRequired,
+                StaticValue = CryptographicBuffer.CreateFromByteArray(new byte[] { 0x01, 0x01 })   // report 1, input
+            });
+            return reference.Error == BluetoothError.Success ? created.ServiceProvider : null;
+        }
+
+        static async Task<bool> AddCharacteristic(GattLocalService svc, int id, GattCharacteristicProperties properties, byte[] value)
+        {
+            var result = await svc.CreateCharacteristicAsync(Uuid16(id), Parameters(properties, value));
+            return result.Error == BluetoothError.Success;
+        }
+
+        static GattLocalCharacteristicParameters Parameters(GattCharacteristicProperties properties, byte[] value)
+        {
+            var parameters = new GattLocalCharacteristicParameters
+            {
+                CharacteristicProperties = properties,
+                ReadProtectionLevel = GattProtectionLevel.EncryptionRequired,
+                WriteProtectionLevel = GattProtectionLevel.EncryptionRequired
+            };
+            if (value != null) parameters.StaticValue = CryptographicBuffer.CreateFromByteArray(value);
+            return parameters;
         }
 
         sealed class Heard

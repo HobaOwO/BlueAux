@@ -114,6 +114,8 @@ namespace BlueAux
             };
 
             engine.Changed += OnEngineChanged;
+            // "Played recently" runs out with time, not with an engine change.
+            engine.Ticked += OnEngineChanged;
             engine.IdleChanged += idle =>
             {
                 if (idle) TrimMemorySoon();
@@ -216,8 +218,7 @@ namespace BlueAux
         void OnEngineChanged()
         {
             tray.Update();
-            bool streaming = engine.Sessions.Any(s => s.State == LinkState.Streaming);
-            bool wantAwake = settings.KeepAwake && streaming;
+            bool wantAwake = settings.KeepAwake && engine.PlayedRecently;
             if (wantAwake == keepingAwake) return;
             keepingAwake = wantAwake;
             Native.SetThreadExecutionState(wantAwake ? Native.EsContinuous | Native.EsSystemRequired : Native.EsContinuous);

@@ -302,6 +302,7 @@ namespace BlueAux
         {
             Log.Info("{0}: disconnected by you", DisplayName);
             paused = true;
+            CancelRebuild();
             CloseConnection();
             engine.SetAutoPaused(true);
             UpdateState();
@@ -322,10 +323,19 @@ namespace BlueAux
         // as "disconnected by you": it reconnects by itself when the PC is back.
         public void LetGo(string reason)
         {
-            if (connection == null && !isOpen) return;
+            // A rebuild has already closed the connection while it waits, so it counts as connected here.
+            if (connection == null && !isOpen && !fixing) return;
             Log.Info("{0}: disconnected because {1}", DisplayName, reason);
+            CancelRebuild();
             CloseConnection();
             UpdateState();
+        }
+
+        // A rebuild that is still waiting (Rebuild) must not reconnect after you or the PC let the phone go.
+        void CancelRebuild()
+        {
+            fixing = false;
+            settling = false;
         }
 
         // Someone is using the PC again: try right away instead of waiting out the retry delay.
@@ -394,6 +404,7 @@ namespace BlueAux
             // Hold off the background restart while we rebuild it ourselves.
             Reset(TimeSpan.FromSeconds(30));
             await Task.Delay(1500);
+            if (!fixing || shutDown) return;
             // Closing our receiver doesn't always make Windows let go of the phone's old stream, and a
             // connection made onto it is silent again. So have the Bluetooth audio driver drop the link too.
             bool dropped = false;
@@ -401,6 +412,7 @@ namespace BlueAux
             catch { }
             Log.Info(dropped ? "{0}: asked Windows' Bluetooth audio driver to drop its old link" : "{0}: couldn't reach Windows' Bluetooth audio driver to drop its old link", DisplayName);
             await WaitForStreamToCloseAsync();
+            if (!fixing || shutDown) return;
             nextStart = DateTime.UtcNow;
             Connect(true);
             if (!attempting)

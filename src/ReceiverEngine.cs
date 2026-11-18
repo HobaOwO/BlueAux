@@ -30,6 +30,8 @@ namespace BlueAux
         DeviceSession active;
         bool autoPaused;
         bool pcIdle;
+        // Locked with "disconnect when locked" on: nothing connects until it's unlocked.
+        bool locked;
         Radio bluetoothRadio;
         RadioStatus radioStatus = RadioStatus.Unknown;
         DateTime nextRadioCheck;
@@ -80,6 +82,10 @@ namespace BlueAux
         // Nobody has used the PC for a while (and nothing is playing): stay disconnected and stop
         // looking for phones until someone is back, like a chat app showing you as "idle".
         public bool PcIdle { get { return pcIdle; } }
+
+        // Sound came through in the last couple of minutes (a paused phone stays connected for hours,
+        // which mustn't keep the PC awake); the gap covers the pause between songs.
+        public bool PlayedRecently { get { return DateTime.UtcNow - activity.LastAudio < TimeSpan.FromMinutes(2); } }
 
         // The phone is connected but this PC's volume is muted or at zero.
         public bool PcSilenced { get { return sound.PcSilenced; } }
@@ -147,6 +153,7 @@ namespace BlueAux
             Post(() =>
             {
                 if (shuttingDown) return;
+                this.locked = locked && settings.DisconnectWhenLocked;
                 if (locked)
                 {
                     if (!settings.DisconnectWhenLocked) return;
@@ -266,7 +273,7 @@ namespace BlueAux
             if (active != null) return active;
             var dialling = sessions.FirstOrDefault(s => s.IsAttempting);
             if (dialling != null) return dialling;
-            if (autoPaused || pcIdle || !RadioOn) return null;
+            if (autoPaused || pcIdle || locked || !RadioOn) return null;
             return sessions.Where(s => s.CanListen).OrderByDescending(s => s.LastConnected).FirstOrDefault();
         }
 
@@ -307,7 +314,7 @@ namespace BlueAux
             foreach (var session in sessions.ToList()) session.Tick(now, session == listener);
 
             // A phone that's being rebuilt (Fix sound) is briefly not connected; another phone mustn't take over then.
-            if (RadioOn && !autoPaused && !pcIdle && !sessions.Any(s => s.State == LinkState.Streaming || s.IsAttempting || s.IsFixing))
+            if (RadioOn && !autoPaused && !pcIdle && !locked && !sessions.Any(s => s.State == LinkState.Streaming || s.IsAttempting || s.IsFixing))
             {
                 // The phone you used last goes first whenever it's due, like a car stereo.
                 var due = sessions.Where(s => s.WantsAutoAttempt(now)).OrderByDescending(s => s.LastConnected).FirstOrDefault();

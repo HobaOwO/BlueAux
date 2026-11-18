@@ -52,7 +52,7 @@ Play something on your phone and it comes out of your PC.
 BlueAux usually fixes this on its own within a few seconds. If it doesn't: check that the PC isn't muted (the app warns you), then press play on the phone and click **Fix sound**. On an iPhone, pressing a volume button while it's silent also triggers the fix. If it happens often, please [report it](https://github.com/HobaOwO/BlueAux/issues) with your logs.
 
 **How does it know what my iPhone is playing?**
-iPhones tell paired accessories what they play, the same way they tell car stereos and watches. Windows usually sets that up when you pair the phone; if yours didn't, BlueAux shows **Set up** under the phone: hold the unlocked iPhone next to the PC and tap **Pair** when it asks. Once. Apps such as TikTok don't share what they play, so no song shows for them.
+iPhones tell paired accessories what they play, the same way they tell car stereos and watches. Windows usually sets that up when you pair the phone; if yours didn't, BlueAux shows **Set up** under the phone: hold the unlocked iPhone next to the PC and tap **Pair** when it asks. If that doesn't work (common with older iPhones such as the 6, and with some PCs), BlueAux then shows the PC in the iPhone's **Settings → Bluetooth**: tap it there and pair. Once. Apps such as TikTok don't share what they play, so no song shows for them.
 
 **Where does the album art come from?**
 An iPhone sends only the title and artist, so BlueAux looks the cover up in Apple's iTunes catalogue (Deezer as a fallback). That's the one thing it sends anywhere; turn **Album art** off in Settings and it sends nothing at all.
