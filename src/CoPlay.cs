@@ -470,13 +470,20 @@ namespace BlueAux
             if (args[0] == "--coplay-host")
             {
                 CoPlayLog.Init("coplay-host.log");
-                CoPlayLog.Write("--- debug host started");
+                bool phone = args.Length > 1 && args[1] == "phone";
+                CoPlayLog.Write("--- debug host started, sending {0}", phone ? "the phone's audio" : "a test beep every second");
                 using (var host = new CoPlayHost(Environment.MachineName + " (test)"))
                 {
+                    AudioSink send = host.SendAudio;
+                    var capture = phone ? new PhoneCapture(send) : null;
+                    var tone = phone ? null : new ToneSource(send);
                     while (true)
                     {
                         Thread.Sleep(2000);
-                        CoPlayLog.Write("host: {0} guest(s) [{1}], {2} packets sent", host.GuestNames.Length, string.Join(", ", host.GuestNames), host.PacketsSent);
+                        // With no window there's no phone watcher: take whichever phone stream Windows has active.
+                        if (capture != null) capture.InputId = SoundCheck.InputIdOf(SoundCheck.Read(Guid.Empty, null).StreamId);
+                        CoPlayLog.Write("host: {0} guest(s) [{1}], {2} packets sent{3}", host.GuestNames.Length, string.Join(", ", host.GuestNames),
+                            host.PacketsSent, capture != null ? ", phone input " + (capture.InputId ?? "not found") : "");
                     }
                 }
             }
@@ -505,12 +512,15 @@ namespace BlueAux
                 var left = new ManualResetEvent(false);
                 using (var guest = new CoPlayGuest(host, name))
                 {
+                    float peak = 0;
+                    guest.Audio += (time, pcm, offset, frames) => peak = Math.Max(peak, Wasapi.Peak(pcm, offset, frames));
                     guest.HostLeft += () => left.Set();
                     while (!left.WaitOne(2000))
                     {
-                        CoPlayLog.Write("guest: {0}, clock offset {1:0.000} ms, round trip {2:0.000} ms, {3} audio packets",
+                        CoPlayLog.Write("guest: {0}, clock offset {1:0.000} ms, round trip {2:0.000} ms, {3} audio packets, peak {4:0.00}",
                             guest.Answering ? "host answering" : "NO ANSWER from host", guest.Offset / (double)HostClock.Ms,
-                            guest.RoundTrip / (double)HostClock.Ms, guest.AudioPackets);
+                            guest.RoundTrip / (double)HostClock.Ms, guest.AudioPackets, peak);
+                        peak = 0;
                     }
                 }
                 if (hostIp != null) return 0;

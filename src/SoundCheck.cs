@@ -318,7 +318,7 @@ namespace BlueAux
         }
 
         // The stream ID ends in "%b{<guid>}": the phone's hidden input device {0.0.1.00000000}.{<guid>}.
-        static string InputIdOf(string sid)
+        internal static string InputIdOf(string sid)
         {
             if (sid == null) return null;
             int start = sid.LastIndexOf("%b{", StringComparison.Ordinal);
@@ -496,16 +496,16 @@ namespace BlueAux
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        struct PropertyKey { public Guid Fmtid; public int Pid; }
+        internal struct PropertyKey { public Guid Fmtid; public int Pid; }
 
         [StructLayout(LayoutKind.Sequential)]
-        struct PropVariant { public ushort Vt; public ushort R1, R2, R3; public IntPtr Pointer; public IntPtr Extra; }
+        internal struct PropVariant { public ushort Vt; public ushort R1, R2, R3; public IntPtr Pointer; public IntPtr Extra; }
 
         [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-        class MMDeviceEnumeratorCo { }
+        internal class MMDeviceEnumeratorCo { }
 
         [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        interface IMMDeviceEnumerator
+        internal interface IMMDeviceEnumerator
         {
             void EnumAudioEndpoints(int dataFlow, int stateMask, out IMMDeviceCollection devices);
             void GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
@@ -513,14 +513,14 @@ namespace BlueAux
         }
 
         [ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        interface IMMDeviceCollection
+        internal interface IMMDeviceCollection
         {
             void GetCount(out int count);
             void Item(int index, out IMMDevice device);
         }
 
         [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        interface IMMDevice
+        internal interface IMMDevice
         {
             void Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object instance);
             void OpenPropertyStore(int access, out IPropertyStore store);
@@ -529,7 +529,7 @@ namespace BlueAux
         }
 
         [ComImport, Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        interface IPropertyStore
+        internal interface IPropertyStore
         {
             void GetCount(out int count);
             void GetAt(int index, out PropertyKey key);
