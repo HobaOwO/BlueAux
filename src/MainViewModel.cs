@@ -13,6 +13,8 @@ namespace BlueAux
         const int MaxIdleMinutes = 240;
 
         readonly ReceiverEngine engine;
+        readonly CoPlaySession coPlay;
+        readonly ObservableCollection<CoPlayHostOption> coPlayHosts = new ObservableCollection<CoPlayHostOption>();
         readonly AppSettings settings;
         readonly ListCollectionView devices;
         readonly ListCollectionView allDevices;
@@ -38,9 +40,10 @@ namespace BlueAux
         bool heroSong;
         AlbumArt.Art heroArt;
 
-        public MainViewModel(ReceiverEngine engine, AppSettings settings)
+        public MainViewModel(ReceiverEngine engine, AppSettings settings, CoPlaySession coPlay)
         {
             this.engine = engine;
+            this.coPlay = coPlay;
             this.settings = settings;
             themes = Theme.All.Select(name => new ThemeOption(name)).ToArray();
             art = new AlbumArt(System.Windows.Application.Current.Dispatcher);
@@ -99,6 +102,13 @@ namespace BlueAux
                 SetIdleMinutes(m < 5 ? m + 1 : (m / 5 + 1) * 5);
             });
 
+            CoPlayHostCommand = new RelayCommand(coPlay.StartHost);
+            CoPlayJoinCommand = new RelayCommand(coPlay.StartSearch);
+            CoPlayStopCommand = new RelayCommand(coPlay.Stop);
+            CoPlayAdjustLessCommand = new RelayCommand(() => SetCoPlayAdjust(coPlay.AdjustMs - 10));
+            CoPlayAdjustMoreCommand = new RelayCommand(() => SetCoPlayAdjust(coPlay.AdjustMs + 10));
+            coPlay.Changed += RefreshCoPlay;
+
             engine.Changed += Refresh;
             engine.Ticked += Refresh;
             engine.VisibilityChanged += () =>
@@ -130,6 +140,11 @@ namespace BlueAux
         public string SongSetupAction { get { return songSetupAction; } }
         public bool ShowSongSetupAction { get { return songSetupAction != null; } }
         public bool ShowSongSetupDismiss { get { return !engine.Setup.IsBusy; } }
+        public ICommand CoPlayHostCommand { get; private set; }
+        public ICommand CoPlayJoinCommand { get; private set; }
+        public ICommand CoPlayStopCommand { get; private set; }
+        public ICommand CoPlayAdjustLessCommand { get; private set; }
+        public ICommand CoPlayAdjustMoreCommand { get; private set; }
         public ICommand IdleLessCommand { get; private set; }
         public ICommand IdleMoreCommand { get; private set; }
 
@@ -272,6 +287,74 @@ namespace BlueAux
         {
             get { return settings.DisconnectWhenLocked; }
             set { settings.DisconnectWhenLocked = value; settings.Save(); Raise(); }
+        }
+
+        // CoPlay card: Host / Join when off; the PCs playing along, or the hosts found; the Sync row.
+        public bool IsCoPlayOff { get { return coPlay.Mode == CoPlaySession.Modes.Off; } }
+        public bool IsCoPlayOn { get { return !IsCoPlayOff; } }
+        public bool IsCoPlaySearching { get { return coPlay.Mode == CoPlaySession.Modes.Searching; } }
+        public bool ShowCoPlaySync { get { return coPlay.Mode == CoPlaySession.Modes.Hosting || coPlay.Mode == CoPlaySession.Modes.Joined; } }
+        public ObservableCollection<CoPlayHostOption> CoPlayHosts { get { return coPlayHosts; } }
+
+        public string CoPlayStatus
+        {
+            get
+            {
+                switch (coPlay.Mode)
+                {
+                    case CoPlaySession.Modes.Hosting:
+                        string[] guests = coPlay.GuestNames;
+                        if (guests.Length == 0)
+                            return "Hosting. On the other PCs, open BlueAux and press Join. If they can't find this one, allow BlueAux through Windows Firewall here (private networks).";
+                        return "Playing on " + (guests.Length == 1 ? "1 other PC: " : guests.Length + " other PCs: ") + string.Join(", ", guests)
+                            + (coPlay.PhoneFound ? "" : ". Connect your phone to this PC and play something.");
+                    case CoPlaySession.Modes.Searching:
+                        return coPlay.Hosts.Count == 0 ? "Looking for a PC that's hosting, on this Wi-Fi or network\u2026" : "Pick the PC to play along with";
+                    case CoPlaySession.Modes.Joined:
+                        if (!coPlay.HostAnswering)
+                            return "No answer from " + coPlay.HostName + ". On that PC, allow BlueAux through Windows Firewall (private networks).";
+                        return coPlay.Receiving ? "Playing along with " + coPlay.HostName : "Connected to " + coPlay.HostName + ". Waiting for music.";
+                    default:
+                        return coPlay.Problem ?? "Play your phone on other PCs at the same moment";
+                }
+            }
+        }
+
+        // Typed into the number box, in ms; later is positive.
+        public string CoPlayAdjustText
+        {
+            get { return coPlay.AdjustMs.ToString(); }
+            set
+            {
+                int ms;
+                if (int.TryParse((value ?? "").Trim(), out ms)) SetCoPlayAdjust(ms);
+                else Raise();
+            }
+        }
+
+        void SetCoPlayAdjust(int ms)
+        {
+            coPlay.AdjustMs = ms;
+            Raise("CoPlayAdjustText");
+        }
+
+        void RefreshCoPlay()
+        {
+            var found = coPlay.Mode == CoPlaySession.Modes.Searching ? coPlay.Hosts : new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, System.Net.IPEndPoint>>();
+            if (!found.Select(h => h.Key).SequenceEqual(coPlayHosts.Select(h => h.Name)))
+            {
+                coPlayHosts.Clear();
+                foreach (var each in found)
+                {
+                    var host = each;
+                    coPlayHosts.Add(new CoPlayHostOption(host.Key, new RelayCommand(() => coPlay.Join(host.Key, host.Value))));
+                }
+            }
+            Raise("IsCoPlayOff");
+            Raise("IsCoPlayOn");
+            Raise("IsCoPlaySearching");
+            Raise("ShowCoPlaySync");
+            Raise("CoPlayStatus");
         }
 
         void SetIdleMinutes(int minutes)
@@ -473,6 +556,18 @@ namespace BlueAux
     }
 
     // A theme in the Settings swatch row.
+    public sealed class CoPlayHostOption
+    {
+        public CoPlayHostOption(string name, ICommand join)
+        {
+            Name = name;
+            JoinCommand = join;
+        }
+
+        public string Name { get; private set; }
+        public ICommand JoinCommand { get; private set; }
+    }
+
     public sealed class ThemeOption : ObservableObject
     {
         readonly string name;

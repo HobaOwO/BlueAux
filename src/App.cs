@@ -12,6 +12,7 @@ namespace BlueAux
     {
         const string MutexName = "Local\\" + AppInfo.Id + ".SingleInstance";
         const string ShowEventName = "Local\\" + AppInfo.Id + ".Show";
+        public static bool UiTest;
 
         [STAThread]
         public static int Main(string[] args)
@@ -24,15 +25,17 @@ namespace BlueAux
             // Hidden test switches: a CoPlay host or guest with no window and no single-instance lock (CoPlayDebug).
             if (args.Length >= 1 && args[0].StartsWith("--coplay-")) return CoPlayDebug.Run(args);
 
+            // Hidden test switch: the window without the phone engine, next to the normal app (CoPlay UI tests).
+            UiTest = args.Contains("--ui-test");
             bool createdNew;
-            using (var mutex = new Mutex(true, MutexName, out createdNew))
+            using (var mutex = new Mutex(true, MutexName + (UiTest ? ".Test" : ""), out createdNew))
             {
                 if (!createdNew)
                 {
                     // Already running (probably in the tray): just bring that one up.
                     try
                     {
-                        using (var show = EventWaitHandle.OpenExisting(ShowEventName)) show.Set();
+                        using (var show = EventWaitHandle.OpenExisting(ShowEventName + (UiTest ? ".Test" : ""))) show.Set();
                     }
                     catch
                     {
@@ -40,7 +43,7 @@ namespace BlueAux
                     return 0;
                 }
 
-                using (var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName))
+                using (var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName + (UiTest ? ".Test" : "")))
                 {
                     var app = new App(args.Contains("--minimized"), showEvent);
                     return app.Run();
@@ -56,6 +59,7 @@ namespace BlueAux
         AppSettings settings;
         ReceiverEngine engine;
         MainViewModel viewModel;
+        CoPlaySession coPlay;
         // Only exists while it's on screen; closing it to the tray throws it away to save memory.
         MainWindow window;
         TrayIcon tray;
@@ -104,7 +108,8 @@ namespace BlueAux
             Motion.Changed += ReloadUi;
 
             engine = new ReceiverEngine(Dispatcher, settings);
-            viewModel = new MainViewModel(engine, settings);
+            coPlay = new CoPlaySession(settings, Dispatcher);
+            viewModel = new MainViewModel(engine, settings, coPlay);
             Log.Written += entry => Dispatcher.BeginInvoke(new Action(() => viewModel.AddLogEntry(entry)));
             tray = new TrayIcon(engine, settings, ShowMainWindow, ExitApp);
             Theme.Changed += tray.Update;
@@ -132,7 +137,7 @@ namespace BlueAux
                 session.DisplayName + " disconnected",
                 willReconnect ? "It will reconnect by itself when it's back in range." : "Press Connect when you want it back.",
                 null);
-            engine.Start();
+            if (!Program.UiTest) engine.Start();
 
             var listener = new Thread(ListenForShowRequests) { IsBackground = true, Name = "Show listener" };
             listener.Start();
@@ -250,6 +255,7 @@ namespace BlueAux
         {
             if (exiting) return;
             exiting = true;
+            coPlay.Stop();
             engine.Shutdown();
             tray.Dispose();
             Native.SetThreadExecutionState(Native.EsContinuous);

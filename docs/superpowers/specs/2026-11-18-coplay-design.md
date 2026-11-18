@@ -71,7 +71,7 @@ using the ping with the shortest round trip among the last 8, i.e. 4 s (the leas
 ### Playing at the same moment (host and guests alike)
 
 Every PC plays audio stamped host time *T* when its own speakers reach host time *T + delay + adjust*:
-- **delay** is fixed at 300 ms: room for Wi-Fi hiccups and re-sent packets.
+- **delay** is fixed at 300 ms: room for Wi-Fi hiccups.
 - **adjust** is per PC (−300…+300 ms, the "Sync" setting) for speakers that lag on their own (Bluetooth
   speakers, some USB DACs). Default 0.
 
@@ -94,19 +94,25 @@ A **CoPlay** card at the bottom of the main page, in the existing card style:
 - Join: list of hosts found (refreshes every 3 s), each with **Join**; then "Playing with <host>" and **Stop**.
 - Host or joined: the **Sync** row, −/+ in 10 ms steps, the same control as "Rest after N min".
 
-CoPlay is off at every start (it doesn't start by itself).
+CoPlay is off at every start (it doesn't start by itself). It runs on its own 1 s timer, not the phone
+engine's (which slows to 5 s when idle).
 
 ### Testing on one PC
 
-Hidden switches:
-- `--coplay-guest [host-ip]`: a headless guest without the window or the single-instance lock, logging to
-  `%AppData%\BlueAux\coplay-guest.log`. Joins the first host found (or the given address).
-- `--coplay-host`: starts hosting when the app starts.
-- `--coplay-tone`: the host sends a short beep at each whole second of its own clock instead of the phone.
-  Every player logs when each beep reaches its speakers (in host time), so host and guest can be compared.
+Hidden switches (none of them is needed to use CoPlay):
+- `--coplay-host [phone] [loud]`: a host with no window and no single-instance lock (so it runs next to the
+  normal app), logging to `coplay-host.log`. It sends a 100 ms beep at each whole second of its own clock, or
+  with `phone` the audio of whichever phone stream Windows has active (no mute: it's only a test).
+- `--coplay-guest [host-ip] [loud] [skew]`: a guest with no window, logging to `coplay-guest.log`. Joins the
+  first host found, or the given address. `skew` pretends its clock is 7 s off and runs 0.02 % fast.
+- Both test players send silence to the speakers unless `loud` is given; the logs still show what they play.
+- `--ui-test`: the normal window with its own instance lock and without the phone engine, to try the CoPlay
+  card next to the running app.
 
-Logs: `coplay.log` (in-app host or guest) and `coplay-guest.log`, once every 2 s: level, offset, round trip,
-queued audio, sync error, jumps and corrections.
+Every player logs when the start of each test beep leaves its speakers, in host time ("beep of host second N
+leaves the speakers at +300.2 ms"): PCs in sync log the same number. Logs (`coplay.log` for the app,
+`coplay-host.log`, `coplay-guest.log`) also show, every 2 s: level, queued audio, sync error, jumps,
+corrections, and for guests the clock offset and round trip.
 
 ## Not in this version
 

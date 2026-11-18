@@ -135,6 +135,12 @@ namespace BlueAux
             {
                 if (e.Key == Key.Enter) idleBox.GetBindingExpression(TextBox.TextProperty).UpdateSource();
             };
+            var adjustBox = (TextBox)root.FindName("CoPlayAdjustBox");
+            adjustBox.PreviewTextInput += (s, e) => e.Handled = !e.Text.All(c => char.IsDigit(c) || c == '-');
+            adjustBox.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter) adjustBox.GetBindingExpression(TextBox.TextProperty).UpdateSource();
+            };
         }
 
         // Maximized, Windows hangs the resize border off-screen; keep the content inside it.

@@ -15,7 +15,7 @@ namespace BlueAux
     // Windows' stream for the phone (its Volume Mixer entry) and plays its own capture through the same
     // delayed player as the guests. The mute is checked every tick, undone on Stop, and remembered in
     // settings so a crash can't leave the phone muted.
-    sealed class CoPlaySession
+    public sealed class CoPlaySession
     {
         public enum Modes { Off, Hosting, Searching, Joined }
 
@@ -41,6 +41,14 @@ namespace BlueAux
             this.ui = ui;
             CoPlayLog.Init("coplay.log");
             Hosts = new List<KeyValuePair<string, IPEndPoint>>();
+            // Its own second, not the engine's (that slows to 5 s when idle): the host's mute and the status
+            // should follow within a second.
+            var timer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (s, e) =>
+            {
+                Tick();
+                if (Mode != Modes.Off) Raise();
+            }, ui);
+            timer.Start();
         }
 
         public Modes Mode { get; private set; }
@@ -142,7 +150,7 @@ namespace BlueAux
             Raise();
         }
 
-        public void Tick()
+        void Tick()
         {
             if (Mode == Modes.Searching && DateTime.UtcNow - lastFind > SearchEvery) Find();
 

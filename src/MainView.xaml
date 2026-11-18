@@ -359,6 +359,68 @@
                         Visibility="{Binding ShowDeviceList, Converter={StaticResource BoolToVis}}">
           <ItemsControl ItemsSource="{Binding Devices}" ItemTemplate="{StaticResource DeviceRow}" AlternationCount="1000" Focusable="False"/>
         </ContentControl>
+
+        <!-- CoPlay: the phone on other BlueAux PCs at the same moment (CoPlaySession) -->
+        <ContentControl Style="{StaticResource Card}" Margin="0,8,0,0" Padding="16,8,8,8">
+          <StackPanel>
+            <Grid MinHeight="40">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Style="{StaticResource Icon}" Text="&#xE7F5;" Foreground="{DynamicResource TextSecondary}" Margin="0,0,12,0" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                <TextBlock Style="{StaticResource Body}" Text="CoPlay"/>
+                <TextBlock Style="{StaticResource Caption}" Text="{Binding CoPlayStatus}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}"/>
+              </StackPanel>
+              <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Style="{StaticResource Button}" Content="Host" Command="{Binding CoPlayHostCommand}" Margin="0,0,8,0"
+                        ToolTip="Your phone plays to this PC, and other PCs on this network can play along"
+                        Visibility="{Binding IsCoPlayOff, Converter={StaticResource BoolToVis}}"/>
+                <Button Style="{StaticResource Button}" Content="Join" Command="{Binding CoPlayJoinCommand}"
+                        ToolTip="Play along with another PC on this network that's hosting"
+                        Visibility="{Binding IsCoPlayOff, Converter={StaticResource BoolToVis}}"/>
+                <Button Style="{StaticResource Button}" Content="Stop" Command="{Binding CoPlayStopCommand}"
+                        Visibility="{Binding IsCoPlayOn, Converter={StaticResource BoolToVis}}"/>
+              </StackPanel>
+            </Grid>
+            <ItemsControl ItemsSource="{Binding CoPlayHosts}" Focusable="False" Margin="28,0,0,0"
+                          Visibility="{Binding IsCoPlaySearching, Converter={StaticResource BoolToVis}}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Grid MinHeight="40">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*"/>
+                      <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Button Grid.Column="1" Style="{StaticResource AccentButton}" Content="Join" Command="{Binding JoinCommand}" VerticalAlignment="Center"/>
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Grid MinHeight="40" Margin="28,0,0,0" Visibility="{Binding ShowCoPlaySync, Converter={StaticResource BoolToVis}}">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Style="{StaticResource BodySecondary}" Text="Sync this PC" VerticalAlignment="Center"
+                         ToolTip="If this PC sounds early or late next to the others (Bluetooth speakers often lag), move it later (+) or earlier (-)"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Style="{StaticResource IconButton}" Command="{Binding CoPlayAdjustLessCommand}" ToolTip="Earlier" AutomationProperties.Name="Earlier">
+                  <TextBlock Style="{StaticResource Icon}" Text="&#xE738;" FontSize="12"/>
+                </Button>
+                <TextBox x:Name="CoPlayAdjustBox" Style="{StaticResource NumberBox}" Text="{Binding CoPlayAdjustText}" Width="56" MaxLength="4"
+                         TextAlignment="Center" Margin="4,0" AutomationProperties.Name="Sync adjustment in milliseconds"/>
+                <Button Style="{StaticResource IconButton}" Command="{Binding CoPlayAdjustMoreCommand}" ToolTip="Later" AutomationProperties.Name="Later">
+                  <TextBlock Style="{StaticResource Icon}" Text="&#xE710;" FontSize="12"/>
+                </Button>
+                <TextBlock Style="{StaticResource BodySecondary}" Text="ms" VerticalAlignment="Center" Margin="4,0,0,0"/>
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </ContentControl>
       </StackPanel>
     </ScrollViewer>
   </Grid>
