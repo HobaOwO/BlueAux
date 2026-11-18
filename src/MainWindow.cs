@@ -237,8 +237,11 @@ namespace BlueAux
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            // Without the system menu style, Windows stops drawing its own caption buttons under ours (seen with Mica).
+            Native.SetWindowLong(hwnd, Native.GwlStyle, Native.GetWindowLong(hwnd, Native.GwlStyle) & ~Native.WsSysMenu);
             Theme.ApplyToWindow(this);
-            var source = System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+            var source = System.Windows.Interop.HwndSource.FromHwnd(hwnd);
             if (source != null) source.AddHook(CaptionHook);
         }
 

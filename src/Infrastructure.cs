@@ -24,7 +24,7 @@ namespace BlueAux
         public const string Tagline = "Use your PC as a Bluetooth speaker for your phone";
         // Used for the settings folder, the start-up entry and the single-instance lock.
         public const string Id = "BlueAux";
-        public const string Version = "1.3";
+        public const string Version = "1.4";
         public const string RepoUrl = "https://github.com/HobaOwO/BlueAux";
         // Earlier Ids, so settings and the start-up entry carry over after a rename.
         public static readonly string[] OldIds = { "PhoneSpeaker" };
@@ -207,6 +207,15 @@ namespace BlueAux
     {
         public const uint EsContinuous = 0x80000000;
         public const uint EsSystemRequired = 0x00000001;
+
+        public const int GwlStyle = -16;
+        public const int WsSysMenu = 0x80000;
+
+        [DllImport("user32.dll")]
+        public static extern int GetWindowLong(IntPtr hwnd, int index);
+
+        [DllImport("user32.dll")]
+        public static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 
         public const int DwmUseImmersiveDarkMode = 20;
         // Windows 11 22000+: the title bar's colours, as COLORREF (0x00BBGGRR); DwmColorDefault hands them back to Windows.
