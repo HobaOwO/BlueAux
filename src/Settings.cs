@@ -54,6 +54,10 @@ namespace BlueAux
         public bool AlwaysOnTop;
         // Look the playing song up online (Apple's iTunes catalogue) to show its cover.
         public bool AlbumArt = true;
+        // CoPlay: this PC's own sync correction (ms, later is positive), and the phone stream CoPlay muted
+        // while hosting, so it's unmuted at the next start if the app ended without undoing it.
+        public int CoPlayAdjustMs;
+        public string CoPlayMutedStream;
         public List<DeviceSettings> Devices = new List<DeviceSettings>();
 
         public static string Folder

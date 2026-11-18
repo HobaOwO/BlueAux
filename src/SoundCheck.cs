@@ -252,6 +252,13 @@ namespace BlueAux
                         found.StreamVolume = level;
                         found.StreamMuted = muted;
                         ReadPhoneInput(sid, ref found);
+                        // CoPlay muted Windows' copy and plays the phone itself (delayed): to the watcher it's
+                        // unmuted, and what arrives is what plays.
+                        if (sid == CoPlaySession.MutedStream)
+                        {
+                            found.StreamMuted = false;
+                            found.Output = Math.Max(found.Output, found.Input);
+                        }
                         result = found;
                     }
                     finally { Release(session); }
@@ -721,6 +728,7 @@ namespace BlueAux
                     lastLostLine = null;
                 }
                 watched = null;
+                CoPlaySession.PhoneStream = null;
                 SetSilenced(false);
                 // For a few minutes after losing the phone, note what Windows does with its stream.
                 if (now - lostAt < WatchAfterLoss) DiagWhileDisconnected(now);
@@ -769,6 +777,7 @@ namespace BlueAux
                 Diag(now, active.DisplayName + ": reading Windows' stream '" + streamName + "'"
                     + (active.Container == Guid.Empty ? " (phone's device not known yet)" : ""));
             }
+            CoPlaySession.PhoneStream = levels.Found ? levels.StreamId : null;
             samples++;
             DiagLevels(now, levels);
             SetSilenced(levels.PcSilenced);

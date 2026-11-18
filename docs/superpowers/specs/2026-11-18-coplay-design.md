@@ -66,7 +66,7 @@ Times are in 100 ns units of the PC's performance counter (QPC), which is also w
 audio with, so the host's timestamps come straight from the capture (`qpcPosition`).
 
 Each guest estimates `offset = hostTime - localTime` NTP-style from its pings: `offset = t2 - (t1 + t3) / 2`,
-using the ping with the shortest round trip among the last 20 (the least delayed by Wi-Fi).
+using the ping with the shortest round trip among the last 8, i.e. 4 s (the least delayed by Wi-Fi; older answers go stale as clocks drift).
 
 ### Playing at the same moment (host and guests alike)
 

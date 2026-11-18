@@ -19,13 +19,17 @@ namespace BlueAux
     {
         public const long Second = 10000000, Ms = 10000;
         static readonly long Freq = Stopwatch.Frequency;
+        // Test only (--coplay-guest skew): pretend this PC's clock is 7 s off and runs 0.02 % fast, like
+        // another PC's would, to exercise the clock sync and the drift correction on one PC.
+        public static bool Skewed;
 
         public static long Now
         {
             get
             {
                 long qpc = Stopwatch.GetTimestamp();
-                return qpc / Freq * Second + qpc % Freq * Second / Freq;
+                long now = qpc / Freq * Second + qpc % Freq * Second / Freq;
+                return Skewed ? now + 7 * Second + now / 5000 : now;
             }
         }
     }
@@ -288,8 +292,9 @@ namespace BlueAux
         readonly UdpClient udp;
         readonly byte[] ping;
         readonly Timer pinger;
-        // The last 20 answers (10 s); the one with the shortest round trip was delayed least by the network.
-        readonly long[] trips = new long[20], offsets = new long[20];
+        // The last 8 answers (4 s): the one with the shortest round trip was delayed least by the network.
+        // Not longer: clocks drift apart, so an old answer goes stale.
+        readonly long[] trips = new long[8], offsets = new long[8];
         int answers;
         long offset, trip, lastPong, lastAudio, audioPackets;
         volatile bool stopped;
@@ -461,20 +466,31 @@ namespace BlueAux
     }
 
     // Hidden test switches, so a host and a guest can run on one PC next to the normal app:
-    //   BlueAux.exe --coplay-host        a host with no window (logs to coplay-host.log)
-    //   BlueAux.exe --coplay-guest [ip]  a guest with no window (coplay-guest.log); joins the first host found
+    //   BlueAux.exe --coplay-host [phone] [loud]  a host with no window (logs to coplay-host.log), sending a test
+    //                                             beep every second, or the phone's audio
+    //   BlueAux.exe --coplay-guest [ip] [loud]    a guest with no window (coplay-guest.log); joins the first host
+    // Their players send silence to the speakers unless "loud" is given; the logs show what they play.
     static class CoPlayDebug
     {
+        static bool loud;
+
         public static int Run(string[] args)
         {
+            loud = args.Contains("loud");
+            HostClock.Skewed = args[0] == "--coplay-guest" && args.Contains("skew");
             if (args[0] == "--coplay-host")
             {
                 CoPlayLog.Init("coplay-host.log");
-                bool phone = args.Length > 1 && args[1] == "phone";
+                bool phone = args.Contains("phone");
                 CoPlayLog.Write("--- debug host started, sending {0}", phone ? "the phone's audio" : "a test beep every second");
                 using (var host = new CoPlayHost(Environment.MachineName + " (test)"))
+                using (var player = new CoPlayPlayer(t => t, !loud))
                 {
-                    AudioSink send = host.SendAudio;
+                    AudioSink send = (time, pcm, offset, frames) =>
+                    {
+                        host.SendAudio(time, pcm, offset, frames);
+                        player.Add(time, pcm, offset, frames);
+                    };
                     var capture = phone ? new PhoneCapture(send) : null;
                     var tone = phone ? null : new ToneSource(send);
                     while (true)
@@ -487,7 +503,7 @@ namespace BlueAux
                     }
                 }
             }
-            if (args[0] == "--coplay-guest") return RunGuest(args.Length > 1 ? args[1] : null);
+            if (args[0] == "--coplay-guest") return RunGuest(args.Skip(1).FirstOrDefault(a => a != "loud" && a != "skew"));
             return 1;
         }
 
@@ -511,9 +527,14 @@ namespace BlueAux
 
                 var left = new ManualResetEvent(false);
                 using (var guest = new CoPlayGuest(host, name))
+                using (var player = new CoPlayPlayer(guest.ToHost, !loud))
                 {
                     float peak = 0;
-                    guest.Audio += (time, pcm, offset, frames) => peak = Math.Max(peak, Wasapi.Peak(pcm, offset, frames));
+                    guest.Audio += (time, pcm, offset, frames) =>
+                    {
+                        peak = Math.Max(peak, Wasapi.Peak(pcm, offset, frames));
+                        player.Add(time, pcm, offset, frames);
+                    };
                     guest.HostLeft += () => left.Set();
                     while (!left.WaitOne(2000))
                     {

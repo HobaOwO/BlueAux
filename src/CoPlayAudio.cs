@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -113,6 +114,8 @@ namespace BlueAux
         volatile bool stopped;
         // The phone's input device ({0.0.1.00000000}.{guid}); null while there's no phone. Set by the owner.
         public volatile string InputId;
+        // Reading the phone right now (the host only mutes Windows' copy while this is true).
+        public volatile bool Running;
 
         public PhoneCapture(AudioSink sink)
         {
@@ -160,6 +163,7 @@ namespace BlueAux
                 service = Wasapi.Service(client, Wasapi.IidCaptureClient);
                 var capture = (IAudioCaptureClient)service;
                 client.Start();
+                Running = true;
                 CoPlayLog.Write("capture: reading the phone's input device");
                 while (!stopped && InputId == id)
                 {
@@ -188,10 +192,268 @@ namespace BlueAux
             }
             finally
             {
+                Running = false;
                 Wasapi.Release(service);
                 Wasapi.Release(client);
                 Wasapi.Release(device);
             }
+        }
+
+        public void Dispose()
+        {
+            stopped = true;
+        }
+    }
+
+    // Plays CoPlay audio so that audio stamped host time T leaves this PC's speakers at host time
+    // T + Delay + Adjust. The guests and the host itself all use it, so they line up.
+    // Each time Windows wants more audio, it works out which host time should go out next (the target) and
+    // compares it with where it's reading (the cursor): far off, it jumps; a little off (clocks drifting
+    // apart), it repeats or skips one frame in 250 until it's back; otherwise it plays straight on.
+    sealed class CoPlayPlayer : IDisposable
+    {
+        // Room for Wi-Fi hiccups. The same on every PC, or they wouldn't line up.
+        public static readonly long Delay = 300 * HostClock.Ms;
+        const double FrameTicks = (double)HostClock.Second / CoPlayWire.Rate;
+        const int CorrectEvery = 250;
+        static readonly long JumpOver = 50 * HostClock.Ms, Deadband = 2 * HostClock.Ms;
+
+        sealed class Chunk
+        {
+            public long Time;
+            public byte[] Pcm;
+            public int Frames;
+            public double End { get { return Time + Frames * FrameTicks; } }
+        }
+
+        readonly Func<long, long> toHost;
+        readonly bool quiet;
+        readonly List<Chunk> chunks = new List<Chunk>();
+        volatile bool stopped;
+        long adjust;
+        // Render thread only, under the chunks lock.
+        double cursor, lastError, lastBeep;
+        bool hasCursor;
+        int jumps, corrections;
+        float peak;
+
+        // toHost: this PC's clock to the host's. quiet: do everything but send silence to the speakers (tests).
+        public CoPlayPlayer(Func<long, long> toHost, bool quiet)
+        {
+            this.toHost = toHost;
+            this.quiet = quiet;
+            new Thread(Run) { IsBackground = true, Name = "CoPlay player" }.Start();
+        }
+
+        // This PC's own correction for speakers that lag (Bluetooth speakers), in 100 ns; later is positive.
+        public long Adjust
+        {
+            get { return Interlocked.Read(ref adjust); }
+            set { Interlocked.Exchange(ref adjust, value); }
+        }
+
+        public void Add(long time, byte[] pcm, int offset, int frames)
+        {
+            var chunk = new Chunk { Time = time, Frames = frames, Pcm = new byte[frames * CoPlayWire.FrameBytes] };
+            Buffer.BlockCopy(pcm, offset, chunk.Pcm, 0, chunk.Pcm.Length);
+            lock (chunks)
+            {
+                // Packets can arrive out of order; keep them sorted, drop repeats, hold no more than ~5 s.
+                int i = chunks.Count;
+                while (i > 0 && chunks[i - 1].Time > time) i--;
+                if (i > 0 && chunks[i - 1].Time == time) return;
+                chunks.Insert(i, chunk);
+                if (chunks.Count > 1000) chunks.RemoveAt(0);
+            }
+        }
+
+        void Run()
+        {
+            var enumerator = (SoundCheck.IMMDeviceEnumerator)new SoundCheck.MMDeviceEnumeratorCo();
+            using (var wake = new AutoResetEvent(false))
+            {
+                while (!stopped)
+                {
+                    try
+                    {
+                        Render(enumerator, wake);
+                    }
+                    catch (Exception ex)
+                    {
+                        CoPlayLog.Write("player: stopped: {0}", ex.Message);
+                        Thread.Sleep(1000);
+                    }
+                }
+            }
+            Wasapi.Release(enumerator);
+        }
+
+        static string DefaultSpeakers(SoundCheck.IMMDeviceEnumerator enumerator)
+        {
+            SoundCheck.IMMDevice device = null;
+            try
+            {
+                enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+                string id;
+                device.GetId(out id);
+                return id;
+            }
+            catch
+            {
+                return null;
+            }
+            finally { Wasapi.Release(device); }
+        }
+
+        // Plays on the default speakers until they change or this stops.
+        void Render(SoundCheck.IMMDeviceEnumerator enumerator, AutoResetEvent wake)
+        {
+            SoundCheck.IMMDevice device = null;
+            IAudioClient client = null;
+            object service = null;
+            try
+            {
+                string speakers = DefaultSpeakers(enumerator);
+                if (speakers == null)
+                {
+                    Thread.Sleep(1000);
+                    return;
+                }
+                enumerator.GetDevice(speakers, out device);
+                client = Wasapi.Open(device, wake, 40 * HostClock.Ms);
+                uint size;
+                long latency;
+                client.GetBufferSize(out size);
+                client.GetStreamLatency(out latency);
+                service = Wasapi.Service(client, Wasapi.IidRenderClient);
+                var render = (IAudioRenderClient)service;
+                var pcm = new byte[size * CoPlayWire.FrameBytes];
+                lock (chunks) hasCursor = false;
+                client.Start();
+                CoPlayLog.Write("player: playing on the default speakers, buffer {0:0.0} ms, stream latency {1:0.0} ms{2}",
+                    size * 1000.0 / CoPlayWire.Rate, latency / (double)HostClock.Ms, quiet ? " (quiet test: sending silence)" : "");
+
+                long nextStats = HostClock.Now + 2 * HostClock.Second;
+                while (!stopped)
+                {
+                    wake.WaitOne(200);
+                    uint padding;
+                    client.GetCurrentPadding(out padding);
+                    int frames = (int)(size - padding);
+                    if (frames > 0)
+                    {
+                        // The host time at which the first frame written now leaves the speakers.
+                        long speakerAt = toHost(HostClock.Now + padding * HostClock.Second / CoPlayWire.Rate + latency);
+                        Fill(pcm, frames, speakerAt);
+                        IntPtr data;
+                        render.GetBuffer((uint)frames, out data);
+                        if (quiet) Array.Clear(pcm, 0, frames * CoPlayWire.FrameBytes);
+                        Marshal.Copy(pcm, 0, data, frames * CoPlayWire.FrameBytes);
+                        render.ReleaseBuffer((uint)frames, 0);
+                    }
+
+                    long now = HostClock.Now;
+                    if (now < nextStats) continue;
+                    nextStats = now + 2 * HostClock.Second;
+                    Stats();
+                    if (DefaultSpeakers(enumerator) != speakers)
+                    {
+                        CoPlayLog.Write("player: the default speakers changed, switching");
+                        break;
+                    }
+                }
+                client.Stop();
+            }
+            finally
+            {
+                Wasapi.Release(service);
+                Wasapi.Release(client);
+                Wasapi.Release(device);
+            }
+        }
+
+        void Fill(byte[] pcm, int frames, long speakerAt)
+        {
+            double target = speakerAt - Delay - Adjust;
+            lock (chunks)
+            {
+                double error = hasCursor ? cursor - target : 0;
+                if (!hasCursor || Math.Abs(error) > JumpOver)
+                {
+                    if (hasCursor) jumps++;
+                    cursor = target;
+                    hasCursor = true;
+                    error = 0;
+                }
+                lastError = error;
+                // Positive: we're ahead of the target, so repeat frames; negative: skip frames.
+                int fix = Math.Abs(error) > Deadband ? (int)(error / FrameTicks) : 0;
+
+                int old = 0;
+                while (old < chunks.Count && chunks[old].End < cursor - HostClock.Second / 2) old++;
+                if (old > 0) chunks.RemoveRange(0, old);
+
+                int ci = 0;
+                for (int f = 0; f < frames; f++)
+                {
+                    while (ci < chunks.Count && chunks[ci].End <= cursor + FrameTicks / 2) ci++;
+                    int at = f * CoPlayWire.FrameBytes;
+                    bool wrote = false;
+                    if (ci < chunks.Count)
+                    {
+                        var c = chunks[ci];
+                        int i = (int)Math.Floor((cursor - c.Time) / FrameTicks + 0.5);
+                        if (i >= 0 && i < c.Frames)
+                        {
+                            Buffer.BlockCopy(c.Pcm, i * CoPlayWire.FrameBytes, pcm, at, CoPlayWire.FrameBytes);
+                            wrote = true;
+                        }
+                    }
+                    if (!wrote) pcm[at] = pcm[at + 1] = pcm[at + 2] = pcm[at + 3] = 0;
+                    else Measure(pcm, at, speakerAt + f * FrameTicks);
+
+                    double step = FrameTicks;
+                    if (fix != 0 && f % CorrectEvery == CorrectEvery / 2)
+                    {
+                        step = fix > 0 ? 0 : 2 * FrameTicks;
+                        fix += fix > 0 ? -1 : 1;
+                        corrections++;
+                    }
+                    cursor += step;
+                }
+            }
+        }
+
+        // Level for the log, and for the test beep (ToneSource): when the start of each beep leaves the
+        // speakers, in host time. PCs in sync log the same.
+        void Measure(byte[] pcm, int at, double leavesAt)
+        {
+            float v = Math.Abs((short)(pcm[at] | pcm[at + 1] << 8)) / 32768f;
+            if (v > peak) peak = v;
+            if (v < 0.01f || cursor - lastBeep < HostClock.Second / 2) return;
+            if (cursor % HostClock.Second > 2 * HostClock.Ms) return;
+            lastBeep = cursor;
+            long second = (long)Math.Round(cursor / HostClock.Second);
+            CoPlayLog.Write("player: beep of host second {0} leaves the speakers at +{1:0.00} ms",
+                second % 1000, (leavesAt - second * HostClock.Second) / HostClock.Ms);
+        }
+
+        void Stats()
+        {
+            double queued, error;
+            float level;
+            int j, c;
+            lock (chunks)
+            {
+                queued = chunks.Count > 0 && hasCursor ? Math.Max(0, chunks[chunks.Count - 1].End - cursor) : 0;
+                level = peak;
+                peak = 0;
+                j = jumps;
+                c = corrections;
+                error = lastError;
+            }
+            CoPlayLog.Write("player: level {0:0.00}, queued {1:0} ms, sync error {2:0.00} ms, jumps {3}, corrections {4}",
+                level, queued / HostClock.Ms, error / HostClock.Ms, j, c);
         }
 
         public void Dispose()
