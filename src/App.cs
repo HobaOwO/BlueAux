@@ -123,7 +123,11 @@ namespace BlueAux
 
             engine = new ReceiverEngine(Dispatcher, settings);
             coPlay = new CoPlaySession(settings, Dispatcher);
-            viewModel = new MainViewModel(engine, settings, coPlay);
+            // Updates by itself never mid-song, mid-CoPlay, or while someone is using the window.
+            var updater = new Updater(settings, Dispatcher, !Program.UiTest,
+                () => engine.PlayedRecently || coPlay.Mode != CoPlaySession.Modes.Off || (window != null && window.IsActive),
+                RestartForUpdate);
+            viewModel = new MainViewModel(engine, settings, coPlay, updater);
             Log.Written += entry => Dispatcher.BeginInvoke(new Action(() => viewModel.AddLogEntry(entry)));
             tray = new TrayIcon(engine, settings, ShowMainWindow, ExitApp);
             Theme.Changed += tray.Update;
@@ -152,13 +156,6 @@ namespace BlueAux
                 willReconnect ? "It will reconnect by itself when it's back in range." : "Press Connect when you want it back.",
                 null);
             if (!Program.UiTest) engine.Start();
-            if (!Program.UiTest)
-            {
-                // Never mid-song, mid-CoPlay, or while someone is using the window.
-                new Updater(settings, Dispatcher,
-                    () => engine.PlayedRecently || coPlay.Mode != CoPlaySession.Modes.Off || (window != null && window.IsActive),
-                    RestartForUpdate);
-            }
             if (justUpdated)
             {
                 Log.Info("Updated to {0} {1}", AppInfo.Name, AppInfo.Version);

@@ -557,6 +557,17 @@
                     ToolTip="Drops and rebuilds every connection. Use it if something seems stuck."/>
           </UniformGrid>
 
+          <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button Style="{StaticResource Button}" Content="Check for updates" Command="{Binding CheckUpdateCommand}"
+                    ToolTip="Looks on GitHub for a newer BlueAux and installs it now (BlueAux restarts)"/>
+            <TextBlock Grid.Column="1" Style="{StaticResource Caption}" Text="{Binding UpdateStatus}" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+          </Grid>
+
           <Grid Margin="0,12,0,8">
             <TextBlock Style="{StaticResource BodyStrong}" Text="Activity" Margin="4,0,0,0" VerticalAlignment="Center"/>
             <Button Style="{StaticResource HyperlinkButton}" HorizontalAlignment="Right" Margin="0,0,-8,0" Content="Open logs" Command="{Binding OpenLogCommand}"/>

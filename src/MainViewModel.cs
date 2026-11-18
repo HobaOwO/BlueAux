@@ -14,6 +14,7 @@ namespace BlueAux
 
         readonly ReceiverEngine engine;
         readonly CoPlaySession coPlay;
+        readonly Updater updater;
         readonly ObservableCollection<CoPlayHostOption> coPlayHosts = new ObservableCollection<CoPlayHostOption>();
         readonly AppSettings settings;
         readonly ListCollectionView devices;
@@ -40,7 +41,7 @@ namespace BlueAux
         bool heroSong;
         AlbumArt.Art heroArt;
 
-        public MainViewModel(ReceiverEngine engine, AppSettings settings, CoPlaySession coPlay)
+        public MainViewModel(ReceiverEngine engine, AppSettings settings, CoPlaySession coPlay, Updater updater)
         {
             this.engine = engine;
             this.coPlay = coPlay;
@@ -64,6 +65,9 @@ namespace BlueAux
             PairCommand = new RelayCommand(() => Shell.Open("ms-settings:bluetooth"));
             SoundSettingsCommand = new RelayCommand(() => Shell.Open("ms-settings:sound"));
             RestartCommand = new RelayCommand(engine.ResetAll);
+            this.updater = updater;
+            CheckUpdateCommand = new RelayCommand(updater.CheckNow);
+            updater.StatusChanged += () => Raise("UpdateStatus");
             OpenLogCommand = new RelayCommand(() => Shell.Open(AppSettings.Folder));
             OpenRepoCommand = new RelayCommand(() => Shell.Open(AppInfo.RepoUrl));
             ReportProblemCommand = new RelayCommand(() => Shell.Open(AppInfo.RepoUrl + "/issues"));
@@ -125,6 +129,8 @@ namespace BlueAux
         public ICommand PairCommand { get; private set; }
         public ICommand SoundSettingsCommand { get; private set; }
         public ICommand RestartCommand { get; private set; }
+        public ICommand CheckUpdateCommand { get; private set; }
+        public string UpdateStatus { get { return updater.Status; } }
         public ICommand OpenLogCommand { get; private set; }
         public ICommand OpenRepoCommand { get; private set; }
         public ICommand ReportProblemCommand { get; private set; }

@@ -20,7 +20,7 @@ All with the test switches, next to the normal BlueAux that kept running.
 "Leaves the speakers" is the player's own reckoning (how much Windows has buffered plus the stream latency
 Windows reports). It proves the timing logic; it can't see the speakers' own delay.
 
-## Settings switches (test build 4)
+## Settings switches (test builds 4–5)
 
 - **CoPlay** (General, off by default): shows the CoPlay card. Turning it off stops hosting or joining.
 - **Update automatically** (General, on by default): checks GitHub's latest release (never pre-releases) a minute
@@ -29,6 +29,8 @@ Windows reports). It proves the timing logic; it can't see the speakers' own del
   fetched v1.5, swapped itself (old one kept as `BlueAux.exe.old`, deleted next start), and the restarted copy
   waited for the old one to close. In a protected folder (Program Files) it can't swap and logs that instead.
   Only versions that have the updater update themselves: 1.5 users install 1.6 by hand once.
+- **Check for updates** (Settings → More): looks now and, if there's a newer release, installs it at once and
+  restarts, even while playing. Tested: "You have the latest version (1.5)" here; the pretend-1.4 copy installed 1.5.
 
 ## Not tested yet
 
