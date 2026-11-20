@@ -23,6 +23,7 @@ namespace BlueAux
             this.settings = settings;
             this.showWindow = showWindow;
             this.exitApp = exitApp;
+            Shortcut.Register();
 
             var menu = new ContextMenuStrip();
             menu.Items.Add("Open " + AppInfo.Name);
