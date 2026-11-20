@@ -304,7 +304,10 @@ namespace BlueAux
                 finally { Release(input); }
             }
             // Many phones share a name ("iPhone"), so when both containers are known they decide.
-            if (phone != Guid.Empty && container != Guid.Empty) return container == phone ? 6 + active : 0;
+            // After a re-pair the stream can keep an old container while its parent, the phone's A2DP
+            // service, has the right one (seen: music playing, stream rejected, PC "idle" mid-song).
+            if (phone != Guid.Empty && container != Guid.Empty)
+                return container == phone || ParentContainerOf(inputId) == phone ? 6 + active : 0;
             if (named) return 4 + active;
             return string.IsNullOrWhiteSpace(phoneName) ? 2 + active : 0;
         }
@@ -354,6 +357,26 @@ namespace BlueAux
             }
             return Guid.Empty;
         }
+
+        // The container of the device the endpoint hangs off (for a phone: its Bluetooth A2DP service).
+        static Guid ParentContainerOf(string inputId)
+        {
+            uint node, parent, type, size = 16;
+            var buffer = new byte[16];
+            var key = new PropertyKey { Fmtid = new Guid("8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c"), Pid = 2 };
+            if (CM_Locate_DevNodeW(out node, @"SWD\MMDEVAPI\" + inputId, 0) != 0 || CM_Get_Parent(out parent, node, 0) != 0
+                || CM_Get_DevNode_PropertyW(parent, ref key, out type, buffer, ref size, 0) != 0 || type != 0x0D) return Guid.Empty;
+            return new Guid(buffer);
+        }
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+        static extern int CM_Locate_DevNodeW(out uint node, string id, uint flags);
+
+        [DllImport("cfgmgr32.dll")]
+        static extern int CM_Get_Parent(out uint parent, uint node, uint flags);
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+        static extern int CM_Get_DevNode_PropertyW(uint node, ref PropertyKey key, out uint type, byte[] buffer, ref uint size, uint flags);
 
         static void ReadPhoneInput(string sid, ref SoundLevels result)
         {
