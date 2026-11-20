@@ -13,8 +13,8 @@ using Windows.Foundation;
 [assembly: System.Reflection.AssemblyTitle(BlueAux.AppInfo.Name)]
 [assembly: System.Reflection.AssemblyProduct(BlueAux.AppInfo.Name)]
 [assembly: System.Reflection.AssemblyDescription(BlueAux.AppInfo.Tagline)]
-[assembly: System.Reflection.AssemblyVersion(BlueAux.AppInfo.Version + ".0.0")]
-[assembly: System.Reflection.AssemblyFileVersion(BlueAux.AppInfo.Version + ".0.0")]
+[assembly: System.Reflection.AssemblyVersion(BlueAux.AppInfo.Version + ".0")]
+[assembly: System.Reflection.AssemblyFileVersion(BlueAux.AppInfo.Version + ".0")]
 
 namespace BlueAux
 {
