@@ -24,7 +24,7 @@ Windows reports). It proves the timing logic; it can't see the speakers' own del
 
 - **CoPlay** (General, off by default): shows the CoPlay card. Turning it off stops hosting or joining.
 - **Update automatically** (General, on by default): checks GitHub's latest release (never pre-releases) a minute
-  after start and every 6 h; downloads a newer `BlueAux.exe`, and swaps it in when nothing has played for 2 min,
+  after start and every hour (not a build next to build.cmd); downloads a newer `BlueAux.exe`, and swaps it in when nothing has played for 2 min,
   CoPlay is off and the window isn't in use, then restarts. Tested here with a copy pretending to be 1.4: it
   fetched v1.5, swapped itself (old one kept as `BlueAux.exe.old`, deleted next start), and the restarted copy
   waited for the old one to close. In a protected folder (Program Files) it can't swap and logs that instead.

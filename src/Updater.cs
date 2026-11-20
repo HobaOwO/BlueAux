@@ -11,14 +11,15 @@ using System.Windows.Threading;
 namespace BlueAux
 {
     // Keeps BlueAux up to date from GitHub: looks at the latest release (never a pre-release) soon after start
-    // and every 6 hours, downloads its BlueAux.exe when it's newer, and swaps it in once nothing is playing.
+    // and every hour, downloads its BlueAux.exe when it's newer, and swaps it in once nothing is playing.
     // Windows lets a running .exe be renamed, so the new one takes its place and the old one is deleted
     // at the next start.
     public sealed class Updater
     {
         const string LatestUrl = "https://api.github.com/repos/HobaOwO/BlueAux/releases/latest";
         const string DownloadPrefix = AppInfo.RepoUrl + "/releases/download/";
-        static readonly TimeSpan CheckEvery = TimeSpan.FromHours(6);
+        // GitHub allows 60 unauthenticated checks an hour per address, so hourly is far from its limit.
+        static readonly TimeSpan CheckEvery = TimeSpan.FromHours(1);
 
         readonly AppSettings settings;
         readonly Dispatcher ui;
@@ -43,7 +44,8 @@ namespace BlueAux
             this.ui = ui;
             this.busy = busy;
             this.restart = restart;
-            if (!auto) return;
+            // Replacing a test build by itself would throw away what's being tested; "Check for updates" still works.
+            if (!auto || AppInfo.IsTestBuild) return;
             TryDelete(Exe + ".old");
             TryDelete(Download);
             new DispatcherTimer(TimeSpan.FromSeconds(30), DispatcherPriority.Background, (s, e) => Tick(), ui).Start();

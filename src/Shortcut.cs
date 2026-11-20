@@ -14,6 +14,7 @@ namespace BlueAux
 
         public static void Register()
         {
+            if (AppInfo.IsTestBuild) return;
             try
             {
                 string exe = System.Reflection.Assembly.GetExecutingAssembly().Location;

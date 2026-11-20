@@ -190,7 +190,7 @@ namespace BlueAux
             {
                 using (var key = Registry.CurrentUser.OpenSubKey(RunKey, true))
                 {
-                    if (key == null) return;
+                    if (key == null || AppInfo.IsTestBuild) return;
                     foreach (string oldId in AppInfo.OldIds)
                     {
                         if (oldId == ValueName || key.GetValue(oldId) == null) continue;

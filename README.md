@@ -63,7 +63,7 @@ An iPhone sends only the title and artist, so BlueAux looks the cover up in Appl
 Yes, with **CoPlay**. Turn on **Settings → CoPlay** on every PC (all on the same Wi-Fi). On the PC your phone is connected to, press **Host**; on the others press **Join**, then the host's name. They all play the same music at the same moment, about 0.3 s after the phone. If one sounds early or late, nudge **Sync this PC** on it. If Windows Firewall asks, allow **Private networks**.
 
 **How do I update?**
-BlueAux installs new versions by itself when nothing is playing. To update right away: **Settings → More → Check for updates**. (From 1.5 or older, download the new version once by hand.)
+BlueAux looks for a new version a minute after it starts and then every hour, and installs it once nothing has played for 2 minutes. To update right away: **Settings → More → Check for updates**. (From 1.5 or older, download the new version once by hand.)
 
 **Which speakers does it use?**
 Windows' default output. Switch it from the speaker icon in the taskbar, or **Settings → More → Sound settings** in the app.

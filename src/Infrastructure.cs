@@ -24,7 +24,17 @@ namespace BlueAux
         public const string Tagline = "Use your PC as a Bluetooth speaker for your phone";
         // Used for the settings folder, the start-up entry and the single-instance lock.
         public const string Id = "BlueAux";
-        public const string Version = "1.6.2";
+        public const string Version = "1.6.3";
+        // Built from source and run from its bin folder (next to build.cmd): a test copy, which mustn't update
+        // itself or take over the start-up entry and Start menu shortcut from the copy the user installed.
+        public static bool IsTestBuild
+        {
+            get
+            {
+                try { return System.IO.File.Exists(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), @"..\build.cmd")); }
+                catch { return false; }
+            }
+        }
         public const string RepoUrl = "https://github.com/HobaOwO/BlueAux";
         // Earlier Ids, so settings and the start-up entry carry over after a rename.
         public static readonly string[] OldIds = { "PhoneSpeaker" };
